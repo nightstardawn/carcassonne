@@ -69,6 +69,9 @@ class Tileset:
     def num_tiles(self) -> int:
         return len(self.kinds) * 4
 
+    def get_by_name(self, name: str) -> TileKind:
+        return next(kind for kind in self.kinds if kind.img_src == name)
+
     def cache_images(self, scale: int):
         for kind in self.kinds:
             base = pygame.image.load(f"tiles/{kind.img_src}.bmp")

@@ -19,17 +19,46 @@ DEBUG_LEVEL = QUIET
 
 
 class EntropyDefinition(ABC):
-    def choices(self, pos: Pos, cell: Cell) -> list[Tile]: ...
+    def choices(self, map: Map, pos: Pos, cell: Cell) -> list[Tile]:
+        return list(cell.options)
 
-    def entropy(self, pos: Pos, cell: Cell) -> int:
-        return len(self.choices(pos, cell))
+    def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
+        return len(self.choices(map, pos, cell))
 
-    def take(self, tile: Tile):
+    def take(self, map: Map, tile: Tile):
+        pass
+
+    def new_stage(self, map: Map):
         pass
 
 
+class Piece(ABC):
+    @abstractmethod
+    def has_road(self, direction: Direction) -> bool: ...
+
+    @abstractmethod
+    def has_city(self, direction: Direction) -> bool: ...
+
+    @abstractmethod
+    def has_monastery(self) -> bool: ...
+
+    @abstractmethod
+    def has_shield(self) -> bool: ...
+
+    def valid_beside(self, other: Piece, dir: Direction) -> bool:
+        opp = dir.flip()
+
+        if self.has_road(dir) != other.has_road(opp):
+            return False
+
+        if self.has_city(dir) != other.has_city(opp):
+            return False
+
+        return True
+
+
 @dataclass
-class Tile:
+class Tile(Piece):
     kind: TileKind
     rotation: Angle
 
@@ -51,21 +80,8 @@ class Tile:
     def has_shield(self) -> bool:
         return self.kind.shield
 
-    # does this tile connect to the other tile, if we were to place the other
-    # tile on the given side of this one?
-    def connects(self, other: Tile, dir: Direction) -> bool:
-        opp = dir.flip()
 
-        if self.has_road(dir) != other.has_road(opp):
-            return False
-
-        if self.has_city(dir) != other.has_city(opp):
-            return False
-
-        return True
-
-
-class Cell:
+class Cell(Piece):
     options: set[Tile]
     stage: int
 
@@ -110,7 +126,7 @@ class Cell:
         old_len = self.len
         self.options = {
             tile for tile in self.options
-            if any(tile.connects(other_tile, dir) for other_tile in other.options)
+            if any(tile.valid_beside(other_tile, dir) for other_tile in other.options)
         }
         return old_len - self.len
 
@@ -166,10 +182,13 @@ class Map(EntropyDefinition):
             [[ (Pos(x, y), c) for x, c in enumerate(row) ]
                 for y, row in enumerate(self._cells) ])
 
-    def choices(self, pos: Pos, cell: Cell) -> list[Tile]:
-        return list(cell.options)
+    def bordering(self) -> Iterator[tuple[Pos, Cell]]:
+        for pos, cell in self:
+            if any(other.is_stable for _, other in self.around(pos)):
+                yield pos, cell
 
-    def entropy(self, pos: Pos, cell: Cell) -> int:
+    # faster, more direct entropy calculation for this simple case
+    def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
         return cell.len
 
     def draw(self, screen: pygame.Surface, scale: int):
@@ -181,7 +200,7 @@ class Map(EntropyDefinition):
             if cell.is_stable:
                 choices = list(cell.options)
             else:
-                choices = self.entropy_def.choices(pos, cell)
+                choices = self.entropy_def.choices(self, pos, cell)
 
             dest = self.screen_pos(pos, scale)
             num_choices = len(choices)
@@ -191,7 +210,7 @@ class Map(EntropyDefinition):
                 if cell.is_stable:
                     img.set_alpha(255)
                 else:
-                    img.set_alpha(255 // (num_choices + 1))
+                    img.set_alpha(128 // num_choices)
 
                 screen.blit(img, tuple(dest))
 
@@ -262,15 +281,18 @@ class Map(EntropyDefinition):
             return 0, 0
 
         if option is None:
-            options = self.entropy_def.choices(p, this)
+            options = self.entropy_def.choices(self, p, this)
             if len(options) == 0:
                 self.debug(f"  no options to collapse {p}", INFO)
                 return (0, 0)
             option = random.choice(options)
 
+        if option not in this.options:
+            print("gave an option which is not a valid option!")
+
         old_num = this.len
         this.options &= {option}
-        self.entropy_def.take(option)
+        self.entropy_def.take(self, option)
 
         if this.len == 0:
             raise ValueError(f"collapsed cell at {p} to zero options!")
@@ -278,25 +300,28 @@ class Map(EntropyDefinition):
         diff = old_num - this.len
 
         self.latest += 1
+        self.entropy_def.new_stage(self)
         self.debug(f"collapsing, stage {self.latest}", INFO)
+
         (reductions, visited) = self.reduce(p, self.latest, reductions=diff)
         self.debug(f"collapsed. {reductions} reductions, visited {visited} tiles", INFO)
+
         return (reductions, visited)
 
     def collapse_min(self) -> tuple[int, int]:
-        min_entropy = min(
-            (entropy
-                for (pos, cell) in self
-                if not cell.is_stable and (entropy := self.entropy_def.entropy(pos, cell)) > 0),
-            default=None)
+        min_entropy = min((
+            entropy
+            for (pos, cell) in self.bordering()
+            if not cell.is_stable and (entropy := self.entropy_def.entropy(self, pos, cell)) > 0
+        ), default=None)
 
         if min_entropy == None:
             self.debug("all cells are fully collapsed already", DEBUG)
             return (0, 0)
 
         minimum = [
-            (pos, cell) for (pos, cell) in self
-            if self.entropy_def.entropy(pos, cell) == min_entropy ]
+            (pos, cell) for (pos, cell) in self.bordering()
+            if self.entropy_def.entropy(self, pos, cell) == min_entropy ]
 
         (pos, chosen_cell) = random.choice(minimum)
         self.debug(f"{len(minimum)} cells to choose from, with entropy {min_entropy}", INFO)
