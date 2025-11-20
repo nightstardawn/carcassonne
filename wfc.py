@@ -1,13 +1,14 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from itertools import chain
-from random import choice
-from typing import Generator, Iterable, get_args, overload, override
-import pygame
+from typing import Callable, Generator, Iterable, get_args, overload, override
 from pygame.rect import Rect
 
 from tileset import TileKind, Tileset
 from geom import *
+
+import random
+import pygame
 
 DebugLevel = Literal[0, 1, 2]
 QUIET: DebugLevel = 0
@@ -15,6 +16,17 @@ INFO: DebugLevel = 1
 DEBUG: DebugLevel = 2
 
 DEBUG_LEVEL = QUIET
+
+
+class EntropyDefinition(ABC):
+    def choices(self, pos: Pos, cell: Cell) -> list[Tile]: ...
+
+    def entropy(self, pos: Pos, cell: Cell) -> int:
+        return len(self.choices(pos, cell))
+
+    def take(self, tile: Tile):
+        pass
+
 
 @dataclass
 class Tile:
@@ -92,6 +104,9 @@ class Cell:
     # reduce the possibilities of this cell according to another cell, attached
     # to this one via the given direction. return the number of reductions made
     def reduce(self, other: Cell, dir: Direction) -> int:
+        if self.is_stable:
+            return 0
+
         old_len = self.len
         self.options = {
             tile for tile in self.options
@@ -100,12 +115,12 @@ class Cell:
         return old_len - self.len
 
 
-class Map:
+class Map(EntropyDefinition):
     width: int
     height: int
     latest: int
-
     tileset: Tileset
+    entropy_def: EntropyDefinition
 
     _cells: list[list[Cell]]
 
@@ -115,6 +130,7 @@ class Map:
         self._cells = [ [ Cell(tileset.kinds) for _ in range(width) ] for _ in range(height) ]
         self.latest = 0
         self.tileset = tileset
+        self.entropy_def = self
 
     @property
     def min(self) -> Pos:
@@ -150,16 +166,33 @@ class Map:
             [[ (Pos(x, y), c) for x, c in enumerate(row) ]
                 for y, row in enumerate(self._cells) ])
 
+    def choices(self, pos: Pos, cell: Cell) -> list[Tile]:
+        return list(cell.options)
+
+    def entropy(self, pos: Pos, cell: Cell) -> int:
+        return cell.len
+
     def draw(self, screen: pygame.Surface, scale: int):
         for pos, cell in self:
             if cell.len == self.tileset.num_tiles:
                 # don't draw tiles in full superposition
                 continue
 
+            if cell.is_stable:
+                choices = list(cell.options)
+            else:
+                choices = self.entropy_def.choices(pos, cell)
+
             dest = self.screen_pos(pos, scale)
-            for tile in list(cell.options):
-                img = self.tileset.images[tile.kind._id, tile.rotation]
-                img.set_alpha(int(255 / cell.len))
+            num_choices = len(choices)
+            for tile in choices:
+                img = self.tileset.images[tile.kind.id, tile.rotation]
+
+                if cell.is_stable:
+                    img.set_alpha(255)
+                else:
+                    img.set_alpha(255 // (num_choices + 1))
+
                 screen.blit(img, tuple(dest))
 
     def screen_pos(self, p: Pos, scale: int) -> Pos:
@@ -224,15 +257,21 @@ class Map:
     # - impossible options (i.e. in the options argument but not an option of
     #   the cell) will be ignored.
     # - if we end up with no options, an error is raised.
-    def collapse(self, p: Pos, option: Tile | set[Tile]) -> tuple[int, int]:
+    def collapse(self, p: Pos, option: Tile | None = None) -> tuple[int, int]:
         if not (this := self[p]):
             return 0, 0
 
-        if isinstance(option, Tile):
-            option = {option}
+        if option is None:
+            options = self.entropy_def.choices(p, this)
+            if len(options) == 0:
+                self.debug(f"  no options to collapse {p}", INFO)
+                return (0, 0)
+            option = random.choice(options)
 
         old_num = this.len
-        this.options &= option
+        this.options &= {option}
+        self.entropy_def.take(option)
+
         if this.len == 0:
             raise ValueError(f"collapsed cell at {p} to zero options!")
 
@@ -245,24 +284,25 @@ class Map:
         return (reductions, visited)
 
     def collapse_min(self) -> tuple[int, int]:
-        min_cell = min(
-            (cell for (_, cell) in self if not cell.is_stable),
-            key=lambda k: k.len,
+        min_entropy = min(
+            (entropy
+                for (pos, cell) in self
+                if not cell.is_stable and (entropy := self.entropy_def.entropy(pos, cell)) > 0),
             default=None)
 
-        if min_cell == None:
+        if min_entropy == None:
             self.debug("all cells are fully collapsed already", DEBUG)
             return (0, 0)
 
-        minimum = [ (pos, cell) for (pos, cell) in self if cell.len == min_cell.len]
-        self.debug(f"{len(minimum)} cells to choose from, with entropy {min_cell.len}", INFO)
+        minimum = [
+            (pos, cell) for (pos, cell) in self
+            if self.entropy_def.entropy(pos, cell) == min_entropy ]
 
-        (pos, cell) = choice(minimum)
-        chosen_tile = choice(list(cell.options))
-        self.debug(f"  chosen {pos}, with {cell.len} options", INFO)
-        self.debug(f"  chosen tile: {chosen_tile}", INFO)
+        (pos, chosen_cell) = random.choice(minimum)
+        self.debug(f"{len(minimum)} cells to choose from, with entropy {min_entropy}", INFO)
+        self.debug(f"  chosen {pos}, with {chosen_cell.len} options", INFO)
 
-        return self.collapse(pos, chosen_tile)
+        return self.collapse(pos)
 
     def show(self):
         for row in self._cells:
