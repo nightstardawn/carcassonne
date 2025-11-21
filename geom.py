@@ -31,6 +31,9 @@ class Direction(Enum):
             case Direction.Left:
                 return "L"
 
+    def __repr__(self) -> str:
+        return str(self)
+
     def rotate(self, angle: Angle, ccw: bool = False) -> Direction:
         if ccw:
             angle = -angle % 4

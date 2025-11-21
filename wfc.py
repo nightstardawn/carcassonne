@@ -18,12 +18,12 @@ DEBUG: DebugLevel = 2
 DEBUG_LEVEL = QUIET
 
 
-class EntropyDefinition(ABC):
-    def choices(self, map: Map, pos: Pos, cell: Cell) -> list[Tile]:
-        return list(cell.options)
+class WF:
+    def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
+        return { (o, 1) for o in cell.valid_options }
 
     def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
-        return len(self.choices(map, pos, cell))
+        return len(self.wave_function(map, pos, cell))
 
     def take(self, map: Map, tile: Tile):
         pass
@@ -82,40 +82,86 @@ class Tile(Piece):
 
 
 class Cell(Piece):
-    options: set[Tile]
+    pos: Pos
+    map: Map
+
+    # the set of possible tiles this cell could take, based only on validity (i.e.
+    # connectedness) to its neighbours
+    valid_options: set[Tile]
+
+    # the last stage at which this cell was updated. used to prevent backtracking
+    # in the iterative reduction process.
     stage: int
 
-    def __init__(self, kinds: Iterable[TileKind]):
-        self.options = { Tile(k, a) for k in kinds for a in get_args(Angle) }
+    # normally would just be all of the valid options, but we can override this
+    # logic by implementing an EntropyDefinition, to e.g. weight the options, or
+    # exclude some of them. this is stored here privately; it's precomputed, but
+    # only w.r.t a given stage. it will need to be recomputed for later stages.
+    __wave_function: set[tuple[Tile, int]]
+    __wave_function_stage: int
+
+    # caches the stability of a cell
+    __stable: bool
+
+    def __init__(self, map: Map, pos: Pos, kinds: Iterable[TileKind]):
+        self.map = map
+        self.pos = pos
+        self.valid_options = { Tile(k, a) for k in kinds for a in get_args(Angle) }
         self.stage = 0
+        self.__wave_function_stage = -1
+        self.__stable = False
 
     def __str__(self) -> str:
         roads = (str(dir) for dir in Direction if self.has_road(dir))
         cities = (str(dir) for dir in Direction if self.has_city(dir))
-        return f"Cell(stage {self.stage}; {self.len} opts; roads: '{"".join(roads)}'; cities: '{"".join(cities)}')"
+        return f"Cell(stage {self.stage}; {len(self)} opts; roads: '{"".join(roads)}'; cities: '{"".join(cities)}')"
 
     def __repr__(self) -> str:
         return str(self)
 
-    @property
-    def len(self) -> int:
-        return len(self.options)
+    def __len__(self) -> int:
+        return len(self.valid_options)
 
     @property
     def is_stable(self) -> bool:
-        return self.len <= 1
+        return len(self) <= 1
+
+    @property
+    def entropy(self) -> int:
+        return sum(w for _, w in self.wave_function)
+
+    # get this cell's wave function (i.e. weighted possibilities) w.r.t its map
+    # map. if already computed for the current stage, it will just be returned.
+    # otherwise, it's computed and cached.
+    #
+    # also, if it's stable, the wave function is defined to just return the
+    # tile which it has stabilised to
+    @property
+    def wave_function(self) -> set[tuple[Tile, int]]:
+        if self.is_stable:
+            return { (o, 1) for o in self.valid_options }
+
+        if self.__wave_function_stage < self.map.latest:
+            self.__wave_function = {
+                (t, v) for t, v in self.map.entropy_def.wave_function(self.map, self.pos, self)
+                if v > 0
+            }
+
+            self.__wave_function_stage = self.map.latest
+
+        return self.__wave_function
 
     def has_road(self, direction: Direction) -> bool:
-        return any(tile.has_road(direction) for tile in self.options)
+        return any(tile.has_road(direction) for tile in self.valid_options)
 
     def has_city(self, direction: Direction) -> bool:
-        return any(tile.has_city(direction) for tile in self.options)
+        return any(tile.has_city(direction) for tile in self.valid_options)
 
     def has_monastery(self) -> bool:
-        return any(tile.has_monastery() for tile in self.options)
+        return any(tile.has_monastery() for tile in self.valid_options)
 
     def has_shield(self) -> bool:
-        return any(tile.has_shield() for tile in self.options)
+        return any(tile.has_shield() for tile in self.valid_options)
 
     # reduce the possibilities of this cell according to another cell, attached
     # to this one via the given direction. return the number of reductions made
@@ -123,30 +169,30 @@ class Cell(Piece):
         if self.is_stable:
             return 0
 
-        old_len = self.len
-        self.options = {
-            tile for tile in self.options
-            if any(tile.valid_beside(other_tile, dir) for other_tile in other.options)
+        old_len = len(self)
+        self.valid_options = {
+            tile for tile in self.valid_options
+            if any(tile.valid_beside(other_tile, dir) for other_tile in other.valid_options)
         }
-        return old_len - self.len
+        return old_len - len(self)
 
 
-class Map(EntropyDefinition):
+class Map:
     width: int
     height: int
     latest: int
     tileset: Tileset
-    entropy_def: EntropyDefinition
+    entropy_def: WF
 
     _cells: list[list[Cell]]
 
     def __init__(self, width: int, height: int, tileset: Tileset):
         self.width = width
         self.height = height
-        self._cells = [ [ Cell(tileset.kinds) for _ in range(width) ] for _ in range(height) ]
+        self._cells = [ [ Cell(self, Pos(x, y), tileset.kinds) for x in range(width) ] for y in range(height) ]
         self.latest = 0
         self.tileset = tileset
-        self.entropy_def = self
+        self.entropy_def = WF()
 
     @property
     def min(self) -> Pos:
@@ -189,28 +235,29 @@ class Map(EntropyDefinition):
 
     # faster, more direct entropy calculation for this simple case
     def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
-        return cell.len
+        return len(cell)
 
     def draw(self, screen: pygame.Surface, scale: int):
         for pos, cell in self:
-            if cell.len == self.tileset.num_tiles:
+            if len(cell) == self.tileset.num_tiles:
                 # don't draw tiles in full superposition
                 continue
 
-            if cell.is_stable:
-                choices = list(cell.options)
-            else:
-                choices = self.entropy_def.choices(self, pos, cell)
+            wf = cell.wave_function
+            entropy = cell.entropy
 
             dest = self.screen_pos(pos, scale)
-            num_choices = len(choices)
-            for tile in choices:
+            for tile, w in wf:
                 img = self.tileset.images[tile.kind.id, tile.rotation]
 
                 if cell.is_stable:
                     img.set_alpha(255)
+                elif entropy > 0:
+                    img.set_alpha((w * 128) // entropy)
                 else:
-                    img.set_alpha(128 // num_choices)
+                    # should never happen
+                    print(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {wf}\n  but it's not stable\n  with possible: {cell.valid_options}")
+                    img.set_alpha((w * 64) // (entropy+1))
 
                 screen.blit(img, tuple(dest))
 
@@ -262,6 +309,7 @@ class Map(EntropyDefinition):
                 # other is the same or older than this; reduce it accordingly
                 self.debug(f"  {p}+{dir} is stale")
                 (r, v) = self.reduce(p + dir, stage)
+                this.reduce(other, dir)
                 reductions += r
                 visited += v
         else:
@@ -276,28 +324,32 @@ class Map(EntropyDefinition):
     # - impossible options (i.e. in the options argument but not an option of
     #   the cell) will be ignored.
     # - if we end up with no options, an error is raised.
-    def collapse(self, p: Pos, option: Tile | None = None) -> tuple[int, int]:
+    def collapse(self, p: Pos, chosen_tile: Tile | None = None) -> tuple[int, int]:
         if not (this := self[p]):
             return 0, 0
 
-        if option is None:
-            options = self.entropy_def.choices(self, p, this)
-            if len(options) == 0:
+        if chosen_tile is None:
+            # get the wave function for the cell (maybe compute it if it's dirty)
+            # and then choose from it, weighted random.
+            wf = this.wave_function
+            if len(wf) == 0:
                 self.debug(f"  no options to collapse {p}", INFO)
                 return (0, 0)
-            option = random.choice(options)
 
-        if option not in this.options:
-            print("gave an option which is not a valid option!")
+            choices, weights = zip(*wf)
+            chosen_tile = random.choices(choices, weights, k=1)[0]
 
-        old_num = this.len
-        this.options &= {option}
-        self.entropy_def.take(self, option)
+        if chosen_tile not in this.valid_options:
+            raise ValueError(
+                f"gave an option {chosen_tile} which is not a valid option,"
+                f" at stage: {self.latest}, pos: {p}."
+            )
 
-        if this.len == 0:
-            raise ValueError(f"collapsed cell at {p} to zero options!")
+        old_len = len(this)
+        this.valid_options = {chosen_tile}
+        self.entropy_def.take(self, chosen_tile)
 
-        diff = old_num - this.len
+        diff = old_len - len(this)
 
         self.latest += 1
         self.entropy_def.new_stage(self)
@@ -312,27 +364,32 @@ class Map(EntropyDefinition):
         min_entropy = min((
             entropy
             for (pos, cell) in self.bordering()
-            if not cell.is_stable and (entropy := self.entropy_def.entropy(self, pos, cell)) > 0
+            # if not cell.is_stable and (entropy := self.entropy_def.entropy(self, pos, cell)) > 0
+            if not cell.is_stable and (entropy := cell.entropy) > 0
         ), default=None)
 
         if min_entropy == None:
-            self.debug("all cells are fully collapsed already", DEBUG)
+            self.entropy_def.new_stage(self)
+            self.latest += 1
             return (0, 0)
+
 
         minimum = [
             (pos, cell) for (pos, cell) in self.bordering()
-            if self.entropy_def.entropy(self, pos, cell) == min_entropy ]
+            # if not cell.is_stable and self.entropy_def.entropy(self, pos, cell) == min_entropy
+            if not cell.is_stable and cell.entropy == min_entropy
+        ]
 
         (pos, chosen_cell) = random.choice(minimum)
         self.debug(f"{len(minimum)} cells to choose from, with entropy {min_entropy}", INFO)
-        self.debug(f"  chosen {pos}, with {chosen_cell.len} options", INFO)
+        self.debug(f"  chosen {pos}, with {len(chosen_cell)} options", INFO)
 
         return self.collapse(pos)
 
     def show(self):
         for row in self._cells:
             for cell in row:
-                print(f"{cell.stage},{cell.len:2d}", end="  ")
+                print(f"{cell.stage},{len(cell):2d}", end="  ")
             print("\n")
 
     def debug(self, str, level: DebugLevel = DEBUG):

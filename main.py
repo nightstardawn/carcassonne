@@ -2,12 +2,12 @@ import pygame
 
 from geom import Pos
 from tileset import Tileset
-from wfc import Map, Tile
-from entropy import CityBuilder, Deck, RealDeck, frequencies
+from wfc import WF, Map, Tile
+from wave_functions import CityBuilder, Deck, RealDeck
 
 
 def main():
-    w, h = 32, 32
+    w, h = 16, 16
     screen_size = 800
     tile_size = screen_size // w
 
@@ -15,7 +15,10 @@ def main():
     tiles.cache_images(tile_size)
 
     map = Map(w, h, tiles)
-    # map.entropy_def = Deck(tiles, frequencies(numdecks=4))
+    # map.entropy_def = RealDeck(Deck(WF(), tiles, decks=2))
+    # map.entropy_def = CityBuilder(WF())
+    map.entropy_def = Deck(WF(), tiles, decks=2)
+    # map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
     map.collapse(Pos(w // 2, h // 2), Tile(tiles.get_by_name("u.lr"), 0))
 
     screen = pygame.display.set_mode((screen_size, screen_size))
@@ -37,8 +40,8 @@ def main():
         if auto:
             map.collapse_min()
 
-        # screen.fill((83, 182, 95))
         screen.fill("tan")
+        # screen.fill((83, 182, 95))
         map.draw(screen, tile_size)
         pygame.display.flip()
         clock.tick(60)
