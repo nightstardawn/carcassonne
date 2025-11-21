@@ -22,13 +22,16 @@ class WF:
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         return { (o, 1) for o in cell.valid_options }
 
-    def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
-        return len(self.wave_function(map, pos, cell))
-
     def take(self, map: Map, tile: Tile):
         pass
 
     def new_stage(self, map: Map):
+        pass
+
+    def draw(self, map: Map, screen: pygame.Surface):
+        pass
+
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, screen: pygame.Surface):
         pass
 
 
@@ -260,6 +263,8 @@ class Map:
                     img.set_alpha((w * 64) // (entropy+1))
 
                 screen.blit(img, tuple(dest))
+
+        self.entropy_def.draw(self, screen)
 
     def screen_pos(self, p: Pos, scale: int) -> Pos:
         return Pos(p.x, self.height - p.y - 1) * scale

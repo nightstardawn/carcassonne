@@ -15,9 +15,9 @@ def main():
     tiles.cache_images(tile_size)
 
     map = Map(w, h, tiles)
-    # map.entropy_def = RealDeck(Deck(WF(), tiles, decks=2))
+    map.entropy_def = RealDeck(Deck(WF(), tiles, decks=2))
     # map.entropy_def = CityBuilder(WF())
-    map.entropy_def = Deck(WF(), tiles, decks=2)
+    # map.entropy_def = Deck(WF(), tiles, decks=2)
     # map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
     map.collapse(Pos(w // 2, h // 2), Tile(tiles.get_by_name("u.lr"), 0))
 

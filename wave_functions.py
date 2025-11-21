@@ -2,6 +2,8 @@ from abc import ABC
 import random
 from typing import ClassVar, Type
 import typing
+
+import pygame
 from tileset import Tileset
 from wfc import Cell, Map, Tile, WF
 from geom import *
@@ -17,14 +19,17 @@ class Extend[T: WF](WF):
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         return self.inner.wave_function(map, pos, cell)
 
-    def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
-        return len(self.wave_function(map, pos, cell))
-
     def take(self, map: Map, tile: Tile):
         self.inner.take(map, tile)
 
     def new_stage(self, map: Map):
         return super().new_stage(map)
+
+    def draw(self, map: Map, screen: pygame.Surface):
+        return super().draw(map, screen)
+
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, screen: pygame.Surface):
+        return super().draw_on_cell(map, pos, cell, screen_pos, screen)
 
 
 class Deck(Extend[WF]):
@@ -92,6 +97,15 @@ class RealDeck(Extend[Deck]):
     def new_stage(self, map: Map):
         super().new_stage(map)
         self.shuffle()
+
+    def draw(self, map: Map, screen: pygame.Surface):
+        super().draw(map, screen)
+
+        if self.top:
+            img = self.inner.tiles.images[self.top, 0]
+            img.set_alpha(255)
+            x, y = 25, 25
+            screen.blit(img, (x, y))
 
 
 # A definition of a wave function in which, if it's possible for the chosen tile
