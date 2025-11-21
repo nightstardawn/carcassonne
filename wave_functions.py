@@ -1,6 +1,6 @@
 from abc import ABC
 import random
-from typing import override
+from typing import Self, override
 
 import pygame
 from tileset import Tileset
@@ -21,20 +21,20 @@ class Extend[T: WF](WF):
         return self.inner.wave_function(map, pos, cell)
 
     @override
-    def take(self, map: Map, tile: Tile):
-        self.inner.take(map, tile)
+    def take(self, map: Map, pos: Pos, tile: Tile):
+        self.inner.take(map, pos, tile)
 
     @override
     def new_stage(self, map: Map):
         return super().new_stage(map)
 
     @override
-    def draw(self, map: Map, screen: pygame.Surface):
-        return super().draw(map, screen)
+    def draw(self, map: Map, scale: int, screen: pygame.Surface):
+        return super().draw(map, scale, screen)
 
     @override
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, screen: pygame.Surface):
-        return super().draw_on_cell(map, pos, cell, screen_pos, screen)
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
+        return super().draw_on_cell(map, pos, cell, screen_pos, scale, screen)
 
 
 class Deck(Extend[WF]):
@@ -75,8 +75,8 @@ class Deck(Extend[WF]):
             }
 
     @override
-    def take(self, map: Map, tile: Tile):
-        super().take(map, tile)
+    def take(self, map: Map, pos: Pos, tile: Tile):
+        super().take(map, pos, tile)
         self.hand[tile.kind.id] -= 1
 
 class RealDeck(Extend[Deck]):
@@ -99,18 +99,13 @@ class RealDeck(Extend[Deck]):
         }
 
     @override
-    def take(self, map: Map, tile: Tile):
-        super().take(map, tile)
-        self.shuffle()
-
-    @override
     def new_stage(self, map: Map):
         super().new_stage(map)
         self.shuffle()
 
     @override
-    def draw(self, map: Map, screen: pygame.Surface):
-        super().draw(map, screen)
+    def draw(self, map: Map, scale: int, screen: pygame.Surface):
+        super().draw(map, scale, screen)
 
         if self.top:
             img = self.inner.tiles.images[self.top, 0]
@@ -143,10 +138,74 @@ class CityBuilder(Extend[WF]):
         for dir, other in map.around(pos):
             opp = dir.flip()
 
-            if tile.has_city(dir) and other.has_city(opp):
+            if tile.connects_city(other, dir):
                 num_connections += 1
 
         return num_connections
 
 
 class RoadBuilder(Extend[WF]):
+    class Road:
+        positions: set[Pos]
+        colour: pygame.Color
+
+        def __init__(self, pos: Pos) -> None:
+            self.positions = {pos}
+            self.colour = pygame.Color(random.randrange(255), random.randrange(255), random.randrange(255))
+
+        def __len__(self) -> int:
+            return len(self.positions)
+
+    # Roads are shared between all cells which constitute a part of that road,
+    # so that their lengths are interlinked
+    roads: dict[Pos, Road]
+    should_draw: bool
+
+    def __init__(self, draw: bool, inner: WF) -> None:
+        super().__init__(inner)
+        self.roads = {}
+        self.should_draw = draw
+
+    @override
+    def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
+        wf = super().wave_function(map, pos, cell)
+        return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
+
+    @override
+    def take(self, map: Map, pos: Pos, tile: Tile):
+        super().take(map, pos, tile)
+
+        if len(tile.kind.roads) > 0:
+            for dir, other in map.around(pos):
+                if (other_road := self.roads.get(other.pos)) and tile.connects_road(other, dir):
+                    self.attach(pos, other_road)
+
+            if pos not in self.roads:
+                self.roads[pos] = RoadBuilder.Road(pos)
+
+    def forecast(self, map: Map, pos: Pos, tile: Tile) -> int:
+        # if we put tile at pos, what length road would it be part of?
+        if len(tile.kind.roads) == 0:
+            return 0
+
+        return sum(
+            len(road) for dir, other in map.around(pos)
+            if (road := self.roads.get(other.pos))
+            and tile.connects_road(other, dir)
+        )
+
+    def attach(self, pos: Pos, other_road: Road):
+        if (this_road := self.roads.get(pos)):
+            for other_pos in other_road.positions:
+                self.roads[other_pos] = this_road
+            this_road.positions |= other_road.positions
+        else:
+            self.roads[pos] = other_road
+            other_road.positions.add(pos)
+
+    @override
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
+        super().draw_on_cell(map, pos, cell, screen_pos, scale, screen)
+
+        if self.should_draw and (road := self.roads.get(pos)):
+            pygame.draw.circle(screen, road.colour, screen_pos + (scale // 2, scale // 2), 5)

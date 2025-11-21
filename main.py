@@ -3,7 +3,7 @@ import pygame
 from geom import Pos
 from tileset import Tileset
 from wfc import WF, Map, Tile
-from wave_functions import CityBuilder, Deck, RealDeck
+from wave_functions import CityBuilder, Deck, RealDeck, RoadBuilder
 
 
 def main():
@@ -20,6 +20,7 @@ def main():
     # map.entropy_def = CityBuilder(WF())
     # map.entropy_def = Deck(WF(), tiles, decks=2)
     # map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
+    map.entropy_def = RoadBuilder(False, WF())
     map.collapse(Pos(w // 2, h // 2), Tile(tiles.get_by_name("u.lr"), 0))
 
     screen = pygame.display.set_mode((screen_w, screen_h))

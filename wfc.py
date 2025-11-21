@@ -22,16 +22,16 @@ class WF:
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         return { (o, 1) for o in cell.valid_options }
 
-    def take(self, map: Map, tile: Tile):
+    def take(self, map: Map, pos: Pos, tile: Tile):
         pass
 
     def new_stage(self, map: Map):
         pass
 
-    def draw(self, map: Map, screen: pygame.Surface):
+    def draw(self, map: Map, scale: int, screen: pygame.Surface):
         pass
 
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, screen: pygame.Surface):
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
         pass
 
 
@@ -47,6 +47,12 @@ class Piece(ABC):
 
     @abstractmethod
     def has_shield(self) -> bool: ...
+
+    def connects_road(self, other: Piece, dir: Direction) -> bool:
+        return self.has_road(dir) and other.has_road(dir.flip())
+
+    def connects_city(self, other: Piece, dir: Direction) -> bool:
+        return self.has_city(dir) and other.has_city(dir.flip())
 
     def valid_beside(self, other: Piece, dir: Direction) -> bool:
         opp = dir.flip()
@@ -131,7 +137,8 @@ class Cell(Piece):
 
     @property
     def is_stable(self) -> bool:
-        return len(self) <= 1
+        # return len(self) <= 1
+        return self.__stable
 
     @property
     def entropy(self) -> int:
@@ -174,6 +181,17 @@ class Cell(Piece):
     def has_shield(self) -> bool:
         return any(tile.has_shield() for tile in self.valid_options)
 
+    def stabilise(self, tile: Tile) -> int:
+        if tile in self.valid_options:
+            old_len = len(self)
+            self.valid_options = {tile}
+            self.__stable = True
+            self.map.entropy_def.take(self.map, self.pos, tile)
+            return old_len - 1
+        else:
+            print(f"error: attempted to stabilise {self.pos} to invalid {tile.kind}")
+            return 0
+
     # reduce the possibilities of this cell according to another cell, attached
     # to this one via the given direction. return the number of reductions made
     def reduce(self, other: Cell, dir: Direction) -> int:
@@ -185,6 +203,7 @@ class Cell(Piece):
             tile for tile in self.valid_options
             if any(tile.valid_beside(other_tile, dir) for other_tile in other.valid_options)
         }
+
         return old_len - len(self)
 
 
@@ -256,8 +275,8 @@ class Map:
 
             wf = cell.wave_function
             entropy = cell.entropy
-
             dest = self.screen_pos(pos, scale)
+
             for tile, w in wf:
                 img = self.tileset.images[tile.kind.id, tile.rotation]
 
@@ -270,9 +289,11 @@ class Map:
                     print(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {wf}\n  but it's not stable\n  with possible: {cell.valid_options}")
                     img.set_alpha((w * 64) // (entropy+1))
 
-                screen.blit(img, tuple(dest))
+                screen.blit(img, dest)
 
-        self.entropy_def.draw(self, screen)
+            self.entropy_def.draw_on_cell(self, pos, cell, dest, scale, screen)
+
+        self.entropy_def.draw(self, scale, screen)
 
     def screen_pos(self, p: Pos, scale: int) -> Pos:
         return Pos(p.x, self.height - p.y - 1) * scale
@@ -358,17 +379,13 @@ class Map:
                 f" at stage: {self.latest}, pos: {p}."
             )
 
-        old_len = len(this)
-        this.valid_options = {chosen_tile}
-        self.entropy_def.take(self, chosen_tile)
-
-        diff = old_len - len(this)
+        diff = this.stabilise(chosen_tile)
 
         self.latest += 1
         self.entropy_def.new_stage(self)
-        self.debug(f"collapsing, stage {self.latest}", INFO)
 
         (reductions, visited) = self.reduce(p, self.latest, reductions=diff)
+
         self.debug(f"collapsed. {reductions} reductions, visited {visited} tiles", INFO)
 
         return (reductions, visited)

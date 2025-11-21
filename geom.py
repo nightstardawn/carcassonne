@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterator, Literal
+from typing import Iterator, Literal, Sequence, overload, override
 
 
 Angle = Literal[0, 1, 2, 3]
@@ -59,15 +59,32 @@ U, D, L, R = Direction.Up, Direction.Down, Direction.Left, Direction.Right
 
 
 @dataclass
-class Pos:
+class Pos(Sequence[float]):
     x: int
     y: int
+
+    def __hash__(self) -> int:
+        return hash((self.x, self.y))
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, ix):
+        return [self.x, self.y][ix]
 
     def __str__(self) -> str:
         return f"({self.x}, {self.y})"
 
-    def __add__(self, other: Direction) -> Pos:
-        return Pos(self.x + other.x, self.y + other.y)
+    @overload
+    def __add__(self, other: Direction) -> Pos: ...
+    @overload
+    def __add__(self, other: Sequence[float]) -> Pos: ...
+
+    def __add__(self, other: Direction | Sequence[float]) -> Pos:
+        if isinstance(other, Direction):
+            return Pos(self.x + other.x, self.y + other.y)
+        elif isinstance(other, Sequence):
+            return Pos(self.x + int(other[0]), self.y + int(other[1]))
 
     def __mul__(self, other: int) -> Pos:
         return Pos(self.x * other, self.y * other)
