@@ -15,6 +15,7 @@ class Extend[T: WF](WF):
     def __init__(self, inner: T) -> None:
         super().__init__()
         self.inner = inner
+        print(f"{inner.__class__.__name__} inside {self.__class__.__name__}")
 
     @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
@@ -25,16 +26,16 @@ class Extend[T: WF](WF):
         self.inner.take(map, pos, tile)
 
     @override
-    def new_stage(self, map: Map):
-        return super().new_stage(map)
+    def after_collapse(self, map: Map, reductions: int):
+        return self.inner.after_collapse(map, reductions)
 
     @override
     def draw(self, map: Map, scale: int, screen: pygame.Surface):
-        return super().draw(map, scale, screen)
+        return self.inner.draw(map, scale, screen)
 
     @override
     def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
-        return super().draw_on_cell(map, pos, cell, screen_pos, scale, screen)
+        return self.inner.draw_on_cell(map, pos, cell, screen_pos, scale, screen)
 
 
 class Deck(Extend[WF]):
@@ -82,6 +83,10 @@ class Deck(Extend[WF]):
 class RealDeck(Extend[Deck]):
     top: int | None
 
+    def __init__(self, inner: Deck) -> None:
+        super().__init__(inner)
+        self.shuffle()
+
     def shuffle(self):
         ids = [ id for id, amount in self.inner.hand.items() if amount > 0 ]
         if len(ids) > 0:
@@ -99,8 +104,8 @@ class RealDeck(Extend[Deck]):
         }
 
     @override
-    def new_stage(self, map: Map):
-        super().new_stage(map)
+    def after_collapse(self, map: Map, reductions: int):
+        super().after_collapse(map, reductions)
         self.shuffle()
 
     @override
@@ -160,16 +165,27 @@ class RoadBuilder(Extend[WF]):
     # so that their lengths are interlinked
     roads: dict[Pos, Road]
     should_draw: bool
+    strict: bool
 
-    def __init__(self, draw: bool, inner: WF) -> None:
+    def __init__(self, inner: WF, draw: bool = False) -> None:
         super().__init__(inner)
         self.roads = {}
         self.should_draw = draw
+        self.strict = True
 
     @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
-        return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
+
+        if self.strict:
+            return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
+        else:
+            return wf
+
+    @override
+    def after_collapse(self, map: Map, reductions: int):
+        super().after_collapse(map, reductions)
+        self.strict = reductions > 0
 
     @override
     def take(self, map: Map, pos: Pos, tile: Tile):

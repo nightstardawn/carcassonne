@@ -25,7 +25,7 @@ class WF:
     def take(self, map: Map, pos: Pos, tile: Tile):
         pass
 
-    def new_stage(self, map: Map):
+    def after_collapse(self, map: Map, reductions: int):
         pass
 
     def draw(self, map: Map, scale: int, screen: pygame.Surface):
@@ -187,7 +187,7 @@ class Cell(Piece):
             self.valid_options = {tile}
             self.__stable = True
             self.map.entropy_def.take(self.map, self.pos, tile)
-            return old_len - 1
+            return max(old_len - 1, 1)
         else:
             print(f"error: attempted to stabilise {self.pos} to invalid {tile.kind}")
             return 0
@@ -382,10 +382,9 @@ class Map:
         diff = this.stabilise(chosen_tile)
 
         self.latest += 1
-        self.entropy_def.new_stage(self)
-
         (reductions, visited) = self.reduce(p, self.latest, reductions=diff)
 
+        self.entropy_def.after_collapse(self, reductions)
         self.debug(f"collapsed. {reductions} reductions, visited {visited} tiles", INFO)
 
         return (reductions, visited)
@@ -399,10 +398,9 @@ class Map:
         ), default=None)
 
         if min_entropy == None:
-            self.entropy_def.new_stage(self)
+            self.entropy_def.after_collapse(self, 0)
             self.latest += 1
             return (0, 0)
-
 
         minimum = [
             (pos, cell) for (pos, cell) in self.bordering()

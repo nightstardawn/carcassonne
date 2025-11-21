@@ -20,7 +20,8 @@ def main():
     # map.entropy_def = CityBuilder(WF())
     # map.entropy_def = Deck(WF(), tiles, decks=2)
     # map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
-    map.entropy_def = RoadBuilder(False, WF())
+    map.entropy_def = RoadBuilder(RealDeck(Deck(WF(), tiles, decks=3)))
+
     map.collapse(Pos(w // 2, h // 2), Tile(tiles.get_by_name("u.lr"), 0))
 
     screen = pygame.display.set_mode((screen_w, screen_h))
