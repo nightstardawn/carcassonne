@@ -7,18 +7,18 @@ from wave_functions import CityBuilder, Deck, RealDeck
 
 
 def main():
-    w, h = 16, 16
+    w, h = 20, 20
     screen_size = 800
     tile_size = screen_size // w
 
     tiles = Tileset()
-    tiles.cache_images(tile_size)
+    tiles.cache_images(tile_size, crop_inset=51)
 
     map = Map(w, h, tiles)
-    map.entropy_def = RealDeck(Deck(WF(), tiles, decks=2))
+    # map.entropy_def = RealDeck(Deck(WF(), tiles, decks=2))
     # map.entropy_def = CityBuilder(WF())
     # map.entropy_def = Deck(WF(), tiles, decks=2)
-    # map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
+    map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
     map.collapse(Pos(w // 2, h // 2), Tile(tiles.get_by_name("u.lr"), 0))
 
     screen = pygame.display.set_mode((screen_size, screen_size))

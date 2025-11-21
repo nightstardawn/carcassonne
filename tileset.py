@@ -75,9 +75,14 @@ class Tileset:
     def __getitem__(self, id: int) -> TileKind:
         return next(kind for kind in self.kinds if kind.id == id)
 
-    def cache_images(self, scale: int):
+    def cache_images(self, scale: int, crop_inset: int = 0):
         for kind in self.kinds:
             base = pygame.image.load(f"tiles/{kind.img_src}.bmp")
+
+            if crop_inset > 0:
+                w, h = base.get_size()
+                base = base.subsurface((crop_inset, crop_inset, w-crop_inset*2, h-crop_inset*2))
+
             scaled = pygame.transform.smoothscale(base, (scale, scale))
             for angle in get_args(Angle):
                 rotated = pygame.transform.rotate(scaled, -angle * 90)
