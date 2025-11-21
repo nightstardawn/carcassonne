@@ -3,7 +3,7 @@ import pygame
 from geom import Pos
 from tileset import Tileset
 from wfc import WF, Map, Tile
-from wave_functions import CityBuilder, Deck, RealDeck, RoadBuilder
+from wave_functions import CityBuilder, LargeCities, DebugOverlay, Deck, RealDeck, RoadBuilder, WeLikeConnections
 
 
 def main():
@@ -16,11 +16,12 @@ def main():
     tiles.cache_images(tile_size, crop_inset=51)
 
     map = Map(w, h, tiles)
-    # map.entropy_def = RealDeck(Deck(WF(), tiles, decks=3))
-    # map.entropy_def = CityBuilder(WF())
+    # map.entropy_def = CityBuilder(map.entropy_def)
     # map.entropy_def = Deck(WF(), tiles, decks=2)
     # map.entropy_def = CityBuilder(Deck(WF(), tiles, decks=3))
-    map.entropy_def = RoadBuilder(RealDeck(Deck(WF(), tiles, decks=3)))
+    map.entropy_def = RealDeck(Deck(map.entropy_def, tiles, decks=1))
+    map.entropy_def = CityBuilder(map.entropy_def)
+    map.entropy_def = DebugOverlay(map.entropy_def)
 
     map.collapse(Pos(w // 2, h // 2), Tile(tiles.get_by_name("u.lr"), 0))
 

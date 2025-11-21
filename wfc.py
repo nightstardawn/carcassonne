@@ -28,10 +28,10 @@ class WF:
     def after_collapse(self, map: Map, reductions: int):
         pass
 
-    def draw(self, map: Map, scale: int, screen: pygame.Surface):
+    def draw(self, map: Map, entropies: dict[Pos, int], scale: int, screen: pygame.Surface):
         pass
 
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
         pass
 
 
@@ -268,13 +268,18 @@ class Map:
         return len(cell)
 
     def draw(self, screen: pygame.Surface, scale: int):
+        entropies = {
+            pos: cell.entropy for pos, cell in self
+            if len(cell) != self.tileset.num_tiles
+        }
+
         for pos, cell in self:
             if len(cell) == self.tileset.num_tiles:
                 # don't draw tiles in full superposition
                 continue
 
             wf = cell.wave_function
-            entropy = cell.entropy
+            entropy = entropies[pos]
             dest = self.screen_pos(pos, scale)
 
             for tile, w in wf:
@@ -285,15 +290,15 @@ class Map:
                 elif entropy > 0:
                     img.set_alpha((w * 128) // entropy)
                 else:
-                    # should never happen
+                    # should never happen that the cell is unstable but has 0 entropy
                     print(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {wf}\n  but it's not stable\n  with possible: {cell.valid_options}")
                     img.set_alpha((w * 64) // (entropy+1))
 
                 screen.blit(img, dest)
 
-            self.entropy_def.draw_on_cell(self, pos, cell, dest, scale, screen)
+            self.entropy_def.draw_on_cell(self, pos, cell, entropies, dest, scale, screen)
 
-        self.entropy_def.draw(self, scale, screen)
+        self.entropy_def.draw(self, entropies, scale, screen)
 
     def screen_pos(self, p: Pos, scale: int) -> Pos:
         return Pos(p.x, self.height - p.y - 1) * scale

@@ -1,10 +1,10 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 import random
 from typing import Self, override
 
 import pygame
-from tileset import Tileset
-from wfc import Cell, Map, Tile, WF
+from tileset import TileKind, Tileset
+from wfc import Cell, Map, Piece, Tile, WF
 from geom import *
 
 
@@ -15,7 +15,7 @@ class Extend[T: WF](WF):
     def __init__(self, inner: T) -> None:
         super().__init__()
         self.inner = inner
-        print(f"{inner.__class__.__name__} inside {self.__class__.__name__}")
+        print(f"... with {self.__class__.__name__}")
 
     @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
@@ -30,12 +30,12 @@ class Extend[T: WF](WF):
         return self.inner.after_collapse(map, reductions)
 
     @override
-    def draw(self, map: Map, scale: int, screen: pygame.Surface):
-        return self.inner.draw(map, scale, screen)
+    def draw(self, map: Map, entropies: dict[Pos, int], scale: int, screen: pygame.Surface):
+        return self.inner.draw(map, entropies, scale, screen)
 
     @override
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
-        return self.inner.draw_on_cell(map, pos, cell, screen_pos, scale, screen)
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+        return self.inner.draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
 
 
 class Deck(Extend[WF]):
@@ -109,8 +109,8 @@ class RealDeck(Extend[Deck]):
         self.shuffle()
 
     @override
-    def draw(self, map: Map, scale: int, screen: pygame.Surface):
-        super().draw(map, scale, screen)
+    def draw(self, map: Map, entropies: dict[Pos, int], scale: int, screen: pygame.Surface):
+        super().draw(map, entropies, scale, screen)
 
         if self.top:
             img = self.inner.tiles.images[self.top, 0]
@@ -121,14 +121,14 @@ class RealDeck(Extend[Deck]):
 
 # A definition of a wave function in which, if it's possible for the chosen tile
 # to connect to an existing city, we won't even consider placing roads.
-class CityBuilder(Extend[WF]):
+class LargeCities(Extend[WF]):
     @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
 
         weighted: set[tuple[Tile, int]] = {
             (tile, m) for tile, n in wf
-            if (m := n * CityBuilder.num_connections(map, pos, tile)) > 0
+            if (m := n * LargeCities.num_connections(map, pos, tile)) > 0
         }
 
         if len(weighted) == 0:
@@ -149,8 +149,8 @@ class CityBuilder(Extend[WF]):
         return num_connections
 
 
-class RoadBuilder(Extend[WF]):
-    class Road:
+class WeLikeConnections(Extend[WF], ABC):
+    class Group:
         positions: set[Pos]
         colour: pygame.Color
 
@@ -161,26 +161,31 @@ class RoadBuilder(Extend[WF]):
         def __len__(self) -> int:
             return len(self.positions)
 
-    # Roads are shared between all cells which constitute a part of that road,
+    # Groups are shared between all cells which constitute a part of that group,
     # so that their lengths are interlinked
-    roads: dict[Pos, Road]
+    groups: dict[Pos, Group]
     should_draw: bool
     strict: bool
 
     def __init__(self, inner: WF, draw: bool = False) -> None:
         super().__init__(inner)
-        self.roads = {}
+        self.groups = {}
         self.should_draw = draw
         self.strict = True
+
+    @staticmethod
+    @abstractmethod
+    def forms_group(kind: TileKind) -> bool: ...
+
+    @staticmethod
+    @abstractmethod
+    def connects(this: Piece, that: Piece, dir: Direction) -> bool: ...
 
     @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
 
-        if self.strict:
-            return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
-        else:
-            return wf
+        return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
 
     @override
     def after_collapse(self, map: Map, reductions: int):
@@ -191,37 +196,117 @@ class RoadBuilder(Extend[WF]):
     def take(self, map: Map, pos: Pos, tile: Tile):
         super().take(map, pos, tile)
 
-        if len(tile.kind.roads) > 0:
+        if self.forms_group(tile.kind):
             for dir, other in map.around(pos):
-                if (other_road := self.roads.get(other.pos)) and tile.connects_road(other, dir):
-                    self.attach(pos, other_road)
+                if (other_group := self.groups.get(other.pos)) and self.connects(tile, other, dir):
+                    self.attach(pos, other_group)
 
-            if pos not in self.roads:
-                self.roads[pos] = RoadBuilder.Road(pos)
+            if pos not in self.groups:
+                self.groups[pos] = WeLikeConnections.Group(pos)
 
     def forecast(self, map: Map, pos: Pos, tile: Tile) -> int:
-        # if we put tile at pos, what length road would it be part of?
-        if len(tile.kind.roads) == 0:
-            return 0
+        shift = 0 if self.strict else 1
+
+        # if we put tile at pos, what length group would it be part of?
+        if not self.forms_group(tile.kind):
+            return shift
 
         return sum(
-            len(road) for dir, other in map.around(pos)
-            if (road := self.roads.get(other.pos))
-            and tile.connects_road(other, dir)
-        )
+            len(group) for dir, other in map.around(pos)
+            if (group := self.groups.get(other.pos))
+            and self.connects(tile, other, dir)
+        ) + shift
 
-    def attach(self, pos: Pos, other_road: Road):
-        if (this_road := self.roads.get(pos)):
-            for other_pos in other_road.positions:
-                self.roads[other_pos] = this_road
-            this_road.positions |= other_road.positions
+    def attach(self, pos: Pos, other_group: Group):
+        if (this_group := self.groups.get(pos)):
+            for other_pos in other_group.positions:
+                self.groups[other_pos] = this_group
+            this_group.positions |= other_group.positions
         else:
-            self.roads[pos] = other_road
-            other_road.positions.add(pos)
+            self.groups[pos] = other_group
+            other_group.positions.add(pos)
 
     @override
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, scale: int, screen: pygame.Surface):
-        super().draw_on_cell(map, pos, cell, screen_pos, scale, screen)
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+        super().draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
 
-        if self.should_draw and (road := self.roads.get(pos)):
-            pygame.draw.circle(screen, road.colour, screen_pos + (scale // 2, scale // 2), 5)
+        if self.should_draw and (group := self.groups.get(pos)):
+            pygame.draw.circle(screen, group.colour, screen_pos + (scale // 2, scale // 2), 5)
+
+
+class RoadBuilder(WeLikeConnections):
+    def __init__(self, inner: WF, draw: bool = False) -> None:
+        super().__init__(inner, draw)
+
+    @override
+    @staticmethod
+    def forms_group(kind: TileKind) -> bool:
+        return len(kind.roads) > 0
+
+
+    @override
+    @staticmethod
+    def connects(this: Piece, that: Piece, dir: Direction) -> bool:
+        return this.connects_road(that, dir)
+
+
+class CityBuilder(WeLikeConnections):
+    def __init__(self, inner: WF, draw: bool = False) -> None:
+        super().__init__(inner, draw)
+
+    @override
+    @staticmethod
+    def forms_group(kind: TileKind) -> bool:
+        return len(kind.cities) > 0
+
+
+    @override
+    @staticmethod
+    def connects(this: Piece, that: Piece, dir: Direction) -> bool:
+        return this.connects_city(that, dir)
+
+
+class DebugOverlay(Extend[WF]):
+    last_taken: Pos | None
+
+    @override
+    def __init__(self, inner: WF) -> None:
+        super().__init__(inner)
+
+    @override
+    def take(self, map: Map, pos: Pos, tile: Tile):
+        super().take(map, pos, tile)
+        self.last_taken = pos
+
+    @override
+    def after_collapse(self, map: Map, reductions: int):
+        super().after_collapse(map, reductions)
+        if reductions == 0:
+            self.last_taken = None
+
+    @override
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+        super().draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
+
+        rect = (screen_pos, (scale, scale))
+        if pos == self.last_taken:
+            pygame.draw.rect(screen, (255, 255, 0), rect, 2)
+            return
+
+        if len(entropies) == 0:
+            return
+
+        max_entropy = max(entropies.values())
+        min_entropy = min((v for v in entropies.values() if v > 1), default=1)
+
+        if not cell.is_stable and (entropy := entropies.get(pos, 0)) > 0:
+            if max_entropy == min_entropy:
+                p = 1
+            else:
+                p = 1 - ((entropy - min_entropy) / (max_entropy - min_entropy))
+
+            p = max(0, min(p, 1))
+
+            w = 4 if entropy == min_entropy else 2
+
+            pygame.draw.rect(screen, (128 - int(128 * p), int(255 * p), int(128 * p)), rect, w)
