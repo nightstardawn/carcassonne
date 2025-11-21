@@ -1,7 +1,6 @@
 from abc import ABC
 import random
-from typing import ClassVar, Type
-import typing
+from typing import override
 
 import pygame
 from tileset import Tileset
@@ -12,22 +11,28 @@ from geom import *
 class Extend[T: WF](WF):
     inner: T
 
+    @override
     def __init__(self, inner: T) -> None:
         super().__init__()
         self.inner = inner
 
+    @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         return self.inner.wave_function(map, pos, cell)
 
+    @override
     def take(self, map: Map, tile: Tile):
         self.inner.take(map, tile)
 
+    @override
     def new_stage(self, map: Map):
         return super().new_stage(map)
 
+    @override
     def draw(self, map: Map, screen: pygame.Surface):
         return super().draw(map, screen)
 
+    @override
     def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, screen_pos: Pos, screen: pygame.Surface):
         return super().draw_on_cell(map, pos, cell, screen_pos, screen)
 
@@ -44,6 +49,7 @@ class Deck(Extend[WF]):
         "ur.ld": 3, "ur.s.ld": 3, "-.lrd": 4, "u.lrd": 3, "-.ulrd": 1,
     }
 
+    @override
     def __init__(self, inner: WF, tiles: Tileset, weight: bool = False, decks: int = 1):
         super().__init__(inner)
         self.tiles = tiles
@@ -54,6 +60,7 @@ class Deck(Extend[WF]):
             kind = next(tile for tile in self.tiles.kinds if tile.img_src == img_src)
             self.hand[kind.id] = amount * decks
 
+    @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
 
@@ -67,6 +74,7 @@ class Deck(Extend[WF]):
                 (tile, self.hand[tile.kind.id] * n) for (tile, n) in wf
             }
 
+    @override
     def take(self, map: Map, tile: Tile):
         super().take(map, tile)
         self.hand[tile.kind.id] -= 1
@@ -81,6 +89,7 @@ class RealDeck(Extend[Deck]):
         else:
             self.top = None
 
+    @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
 
@@ -89,15 +98,17 @@ class RealDeck(Extend[Deck]):
             if tile.kind.id == self.top
         }
 
+    @override
     def take(self, map: Map, tile: Tile):
         super().take(map, tile)
-        self.inner.hand[tile.kind.id] -= 1
         self.shuffle()
 
+    @override
     def new_stage(self, map: Map):
         super().new_stage(map)
         self.shuffle()
 
+    @override
     def draw(self, map: Map, screen: pygame.Surface):
         super().draw(map, screen)
 
@@ -111,6 +122,7 @@ class RealDeck(Extend[Deck]):
 # A definition of a wave function in which, if it's possible for the chosen tile
 # to connect to an existing city, we won't even consider placing roads.
 class CityBuilder(Extend[WF]):
+    @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
 
@@ -135,3 +147,6 @@ class CityBuilder(Extend[WF]):
                 num_connections += 1
 
         return num_connections
+
+
+class RoadBuilder(Extend[WF]):

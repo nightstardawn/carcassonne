@@ -69,17 +69,21 @@ class Tile(Piece):
     def __hash__(self) -> int:
         return hash(self.kind) * 4 + self.rotation
 
+    @override
     def has_road(self, direction: Direction) -> bool:
         dir = direction.rotate(self.rotation, ccw=True)
         return dir in self.kind.roads
 
+    @override
     def has_city(self, direction: Direction) -> bool:
         dir = direction.rotate(self.rotation, ccw=True)
         return any(dir in city for city in self.kind.cities)
 
+    @override
     def has_monastery(self) -> bool:
         return self.kind.monastery
 
+    @override
     def has_shield(self) -> bool:
         return self.kind.shield
 
@@ -154,15 +158,19 @@ class Cell(Piece):
 
         return self.__wave_function
 
+    @override
     def has_road(self, direction: Direction) -> bool:
         return any(tile.has_road(direction) for tile in self.valid_options)
 
+    @override
     def has_city(self, direction: Direction) -> bool:
         return any(tile.has_city(direction) for tile in self.valid_options)
 
+    @override
     def has_monastery(self) -> bool:
         return any(tile.has_monastery() for tile in self.valid_options)
 
+    @override
     def has_shield(self) -> bool:
         return any(tile.has_shield() for tile in self.valid_options)
 
@@ -400,6 +408,3 @@ class Map:
     def debug(self, str, level: DebugLevel = DEBUG):
         if level <= DEBUG_LEVEL:
             print(str)
-
-
-test_map = Map(5, 5, Tileset())
