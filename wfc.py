@@ -315,7 +315,7 @@ class Map:
             dest = self.screen_pos(pos, scale)
 
             for tile, w in wf:
-                img = self.tileset.images[tile.kind.id, tile.rotation]
+                img = self.tileset.images[tile.kind.id, scale, tile.rotation]
 
                 if cell.is_stable:
                     img.set_alpha(255)

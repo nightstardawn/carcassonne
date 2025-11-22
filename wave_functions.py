@@ -98,10 +98,15 @@ class Deck(Extend[WF]):
 
 class RealDeck(Extend[Deck]):
     top: int | None
+    hint_scale: int | None
 
-    def __init__(self, inner: Deck) -> None:
+    def __init__(self, inner: Deck, hint_scale: int | None = 80) -> None:
         super().__init__(inner)
+        self.hint_scale = hint_scale
+
         self.shuffle()
+        if self.hint_scale is not None:
+            self.inner.tiles.cache_images(self.hint_scale, 0)
 
     def shuffle(self):
         ids = [ id for id, amount in self.inner.hand.items() if amount > 0 ]
@@ -128,11 +133,12 @@ class RealDeck(Extend[Deck]):
     def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
         super().draw(map, entropies, scale, screen)
 
-        if self.top:
-            img = self.inner.tiles.images[self.top, 0]
+        if self.top and (hs := self.hint_scale):
+            x, y, w = 20, 20, 4
+            img = self.inner.tiles.images[self.top, self.hint_scale, 0]
             img.set_alpha(255)
-            x, y = 25, 25
-            screen.blit(img, (x, y))
+            pygame.draw.rect(screen, "wheat1", (x, y, hs + w * 2, hs + w * 2))
+            screen.blit(img, (x + w, y + w))
 
 
 # A definition of a wave function in which, if it's possible for the chosen tile
@@ -360,6 +366,6 @@ class DebugOverlay(Extend[WF]):
                 p = 1.0 - ((entropy - min_entropy) / (max_entropy - min_entropy))
 
             p = max(0, min(p, 1))
-            w: int = int(1 + 3*p)
+            w: int = max(0, int(scale*0.05 + (scale*0.1)*p))
 
-            pygame.draw.rect(screen, (80 - int(80 * p), int(200 * p) + 55, int(128 * p), 100), rect, w)
+            pygame.draw.rect(screen, (0, int(180 * p) + 70, int(100 * p) + 25, 100), rect, w)

@@ -10,7 +10,7 @@ W, H = 32, 32
 SCREEN_W = 800
 BACKGROUND = "tan"
 # BACKGROUND = (83, 182, 95) # the background of the tiles
-CROP_INSET = 58
+CROP = True
 
 
 def main():
@@ -19,21 +19,20 @@ def main():
 
     # tiles = Tileset(Tileset.BaseTiles + Tileset.Rivers)
     tiles = Tileset(Tileset.BaseTiles)
-    tiles.cache_images(tile_size, crop_inset=CROP_INSET)
+    tiles.cache_images(tile_size, crop_inset=58 if CROP else 0)
 
     map = Map(W, H, tiles)
     # map.wf_def = CityBuilder(map.wf_def)
     # map.wf_def = Deck(WF(), tiles, decks=2)
     # map.wf_def = CityBuilder(Deck(WF(), tiles, decks=3))
-    map.wf_def = RealDeck(Deck(map.wf_def, tiles, decks=2, infinite=True))
-    map.wf_def = CityBuilder(map.wf_def)
-    # map.wf_def = RoadBuilder(map.wf_def)
+    map.wf_def = RealDeck(Deck(map.wf_def, tiles, decks=3, infinite=False))
+    map.wf_def = CityBuilder(map.wf_def, draw=False)
+    map.wf_def = RoadBuilder(map.wf_def, draw=False)
     # map.wf_def = Yas(map.wf_def)
     map.wf_def = Opportunistic(map.wf_def)
-    # map.wf_def = DebugOverlay(map.wf_def)
+    map.wf_def = DebugOverlay(map.wf_def)
 
     map.collapse(Pos(int(W * 0.5), int(H * 0.5)), Tile(tiles.get_by_name("u.lr"), 0))
-    # map.collapse(Pos(int(W * 0.75), int(H * 0.5)), Tile(tiles.get_by_name("u.lr"), 0))
 
     screen = pygame.display.set_mode((SCREEN_W, screen_h))
     pygame.display.set_caption("Carcassonne!")

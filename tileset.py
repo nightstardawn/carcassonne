@@ -29,7 +29,9 @@ class TileKind:
 
 class Tileset:
     kinds: list[TileKind]
-    images: dict[tuple[int, Angle], pygame.Surface]
+
+    # image cache, keyed by (tile id, scale, angle)
+    images: dict[tuple[int, int, Angle], pygame.Surface]
 
     BaseTiles: list[TileKind] = [
         TileKind(img_src="m", monastery=True),
@@ -99,4 +101,4 @@ class Tileset:
             scaled = pygame.transform.smoothscale(base, (scale, scale))
             for angle in get_args(Angle):
                 rotated = pygame.transform.rotate(scaled, -angle * 90)
-                self.images[kind.id, angle] = rotated
+                self.images[kind.id, scale, angle] = rotated
