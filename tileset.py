@@ -70,7 +70,7 @@ class Tileset:
         TileKind(img_src="river-ld.ur", rivers={L, D}, cities=[{U, R}]),
         TileKind(img_src="river-lr", rivers={L, R}),
         TileKind(img_src="river-lr.-.ud", rivers={L, R}, roads={U, D}),
-        TileKind(img_src="river-lr.-.ur", rivers={L, R}, roads={U, R}),
+        TileKind(img_src="river-ld.-.ur", rivers={L, D}, roads={U, R}),
         TileKind(img_src="river-lr.m.d", rivers={L, R}, monastery=True, roads={D}),
         TileKind(img_src="river-lr.u.d", rivers={L, R}, cities=[{U}], roads={D}),
         TileKind(img_src="river-lr.ud", rivers={L, R}, cities=[{U}, {D}]),

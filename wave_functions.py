@@ -174,11 +174,17 @@ class LargeCities(Extend[WF]):
 class WeLikeConnections(Extend[WF], ABC):
     class Group:
         positions: set[Pos]
+        shields: int
         colour: pygame.Color
 
-        def __init__(self, pos: Pos) -> None:
+        def __init__(self, pos: Pos, shield: bool) -> None:
             self.positions = {pos}
-            self.colour = pygame.Color(random.randrange(255), random.randrange(255), random.randrange(255))
+            self.shields = 1 if shield else 0
+            self.colour = pygame.Color(
+                random.randrange(255),
+                random.randrange(255),
+                random.randrange(255),
+            )
 
         def __len__(self) -> int:
             return len(self.positions)
@@ -188,12 +194,14 @@ class WeLikeConnections(Extend[WF], ABC):
     groups: dict[Pos, Group]
     should_draw: bool
     strict: bool
+    uses_shield_score: bool
 
     def __init__(self, inner: WF, draw: bool = False) -> None:
         super().__init__(inner)
         self.groups = {}
         self.should_draw = draw
         self.strict = True
+        self.uses_shield_score = False
 
     @staticmethod
     @abstractmethod
@@ -207,7 +215,10 @@ class WeLikeConnections(Extend[WF], ABC):
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         wf = super().wave_function(map, pos, cell)
 
-        return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
+        return {
+            (tile, w * f * 5) if (f := self.forecast(map, pos, tile)) > 0 else (tile, w)
+            for tile, w in wf
+        }
 
     @override
     def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
@@ -226,10 +237,10 @@ class WeLikeConnections(Extend[WF], ABC):
         if self.forms_group(tile.kind):
             for dir, other in map.around(pos):
                 if (other_group := self.groups.get(other.pos)) and self.connects(tile, other, dir):
-                    self.attach(pos, other_group)
+                    self.attach(pos, tile, other_group)
 
             if pos not in self.groups:
-                self.groups[pos] = WeLikeConnections.Group(pos)
+                self.groups[pos] = WeLikeConnections.Group(pos, tile.has_shield())
 
     def forecast(self, map: Map, pos: Pos, tile: Tile) -> int:
         shift = 0 if self.strict else 1
@@ -239,16 +250,21 @@ class WeLikeConnections(Extend[WF], ABC):
             return shift
 
         return sum(
-            len(group) for dir, other in map.around(pos)
+            len(group) + (group.shields if self.uses_shield_score else 0)
+            for dir, other in map.around(pos)
             if (group := self.groups.get(other.pos))
             and self.connects(tile, other, dir)
         ) + shift
 
-    def attach(self, pos: Pos, other_group: Group):
+    def attach(self, pos: Pos, tile: Tile, other_group: Group):
+        if tile.has_shield():
+            other_group.shields += 1
+
         if (this_group := self.groups.get(pos)):
             for other_pos in other_group.positions:
                 self.groups[other_pos] = this_group
             this_group.positions |= other_group.positions
+            this_group.shields += other_group.shields
         else:
             self.groups[pos] = other_group
             other_group.positions.add(pos)
@@ -258,7 +274,14 @@ class WeLikeConnections(Extend[WF], ABC):
         super().draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
 
         if self.should_draw and (group := self.groups.get(pos)):
-            pygame.draw.circle(screen, group.colour, screen_pos + (scale // 2, scale // 2), 5)
+            if cell.has_shield() and self.uses_shield_score:
+                pygame.draw.circle(screen, (0, 0, 0), screen_pos + (int(scale * 0.3), scale // 2), 7)
+                pygame.draw.circle(screen, (0, 0, 0), screen_pos + (int(scale * 0.7), scale // 2), 7)
+                pygame.draw.circle(screen, group.colour, screen_pos + (int(scale * 0.3), scale // 2), 5)
+                pygame.draw.circle(screen, group.colour, screen_pos + (int(scale * 0.7), scale // 2), 5)
+            else:
+                pygame.draw.circle(screen, (0, 0, 0), screen_pos + (scale // 2, scale // 2), 7)
+                pygame.draw.circle(screen, group.colour, screen_pos + (scale // 2, scale // 2), 5)
 
 
 class RoadBuilder(WeLikeConnections):
@@ -279,6 +302,7 @@ class RoadBuilder(WeLikeConnections):
 class CityBuilder(WeLikeConnections):
     def __init__(self, inner: WF, draw: bool = False) -> None:
         super().__init__(inner, draw)
+        self.uses_shield_score = True
 
     @override
     @staticmethod
@@ -289,6 +313,21 @@ class CityBuilder(WeLikeConnections):
     @staticmethod
     def connects(this: Piece, that: Piece, dir: Direction) -> bool:
         return this.connects_city(that, dir)
+
+
+class RiverBuilder(WeLikeConnections):
+    def __init__(self, inner: WF, draw: bool = False) -> None:
+        super().__init__(inner, draw)
+
+    @override
+    @staticmethod
+    def forms_group(kind: TileKind) -> bool:
+        return len(kind.rivers) > 0
+
+    @override
+    @staticmethod
+    def connects(this: Piece, that: Piece, dir: Direction) -> bool:
+        return this.connects_river(that, dir)
 
 
 class Opportunistic(Extend[WF]):
@@ -313,6 +352,34 @@ class Yas(Extend[WF]):
     def connects(this: Piece, that: Piece, dir: Direction) -> bool:
         return this.connects_city(that, dir) or this.connects_road(that, dir)
 
+
+class RiversFirst(Extend[WF]):
+    @override
+    def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
+        wf = super().wave_function(map, pos, cell)
+
+        joined_rivers = {
+            (tile, w) for tile, w in wf
+            if (not tile.kind.rivers) or any(
+                other.is_river(dir.flip())
+                for dir, other in map.around(pos)
+            )
+        }
+
+        with_rivers = {
+            (tile, w) for tile, w in joined_rivers if tile.kind.rivers
+        }
+
+        return with_rivers
+
+    @override
+    def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
+        old = super().entropy(map, pos, cell, wf)
+
+        if any(not tile.kind.rivers for tile, _ in wf):
+            return old * 100
+
+        return old
 
 
 class DebugOverlay(Extend[WF]):
@@ -353,11 +420,10 @@ class DebugOverlay(Extend[WF]):
         # any ≤1 entropy cells for the min, though, because these are cells that
         # we don't want to collapse (already collapsed, or not valid)
         max_entropy = max(entropies.values())
-        min_entropy = min((v for v in entropies.values() if v > 1), default=None)
+        min_entropy = min((v for v in entropies.values() if v > 0), default=None)
 
         if min_entropy == None:
             min_entropy = 1
-            map.debug("min entropy was None", INFO)
 
         if not cell.is_stable and (entropy := entropies.get(pos, 0)) > 0:
             if max_entropy == min_entropy:
@@ -365,7 +431,10 @@ class DebugOverlay(Extend[WF]):
             else:
                 p = 1.0 - ((entropy - min_entropy) / (max_entropy - min_entropy))
 
-            p = max(0, min(p, 1))
-            w: int = max(0, int(scale*0.05 + (scale*0.1)*p))
+            p = max(0, min(p, 0.8))
+            if entropy == min_entropy:
+                p = 1
 
-            pygame.draw.rect(screen, (0, int(180 * p) + 70, int(100 * p) + 25, 100), rect, w)
+            w: int = max(0, int(scale*0.05 + (scale*0.05)*p))
+
+            pygame.draw.rect(screen, (0, int(170 * p * p) + 70, int(130 * p) + 25, 100), rect, w)

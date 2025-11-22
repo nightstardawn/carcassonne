@@ -3,10 +3,10 @@ import pygame
 from geom import Pos
 from tileset import Tileset
 from wfc import WF, Map, Tile
-from wave_functions import CityBuilder, LargeCities, DebugOverlay, Deck, Opportunistic, RealDeck, RoadBuilder, WeLikeConnections, Yas
+from wave_functions import CityBuilder, LargeCities, DebugOverlay, Deck, Opportunistic, RealDeck, RiverBuilder, RiversFirst, RoadBuilder, WeLikeConnections, Yas
 
 
-W, H = 32, 32
+W, H = 16, 16
 SCREEN_W = 800
 BACKGROUND = "tan"
 # BACKGROUND = (83, 182, 95) # the background of the tiles
@@ -17,22 +17,28 @@ def main():
     screen_h = SCREEN_W * (H / W)
     tile_size = SCREEN_W // W
 
-    # tiles = Tileset(Tileset.BaseTiles + Tileset.Rivers)
-    tiles = Tileset(Tileset.BaseTiles)
+    tiles = Tileset(Tileset.BaseTiles + Tileset.Rivers)
     tiles.cache_images(tile_size, crop_inset=58 if CROP else 0)
 
     map = Map(W, H, tiles)
-    # map.wf_def = CityBuilder(map.wf_def)
+
     # map.wf_def = Deck(WF(), tiles, decks=2)
+    map.wf_def = RealDeck(Deck(map.wf_def, tiles, decks=3))
+
     # map.wf_def = CityBuilder(Deck(WF(), tiles, decks=3))
-    map.wf_def = RealDeck(Deck(map.wf_def, tiles, decks=3, infinite=False))
-    map.wf_def = CityBuilder(map.wf_def, draw=False)
-    map.wf_def = RoadBuilder(map.wf_def, draw=False)
     # map.wf_def = Yas(map.wf_def)
+
+    map.wf_def = RoadBuilder(map.wf_def, draw=False)
+    map.wf_def = CityBuilder(map.wf_def, draw=True)
+    # map.wf_def = RiverBuilder(map.wf_def, draw=False)
     map.wf_def = Opportunistic(map.wf_def)
+
     map.wf_def = DebugOverlay(map.wf_def)
 
-    map.collapse(Pos(int(W * 0.5), int(H * 0.5)), Tile(tiles.get_by_name("u.lr"), 0))
+    map.collapse(
+        Pos(int(W * 0.5), int(H * 0.5)),
+        Tile(tiles.get_by_name("u.lr"), 0),
+    )
 
     screen = pygame.display.set_mode((SCREEN_W, screen_h))
     pygame.display.set_caption("Carcassonne!")
@@ -42,6 +48,8 @@ def main():
 
     screen.fill(BACKGROUND)
     map.draw(screen, tile_size)
+
+    frame_times = []
 
     while running:
         for event in pygame.event.get():
@@ -57,7 +65,12 @@ def main():
             step(screen, map, tile_size)
 
         pygame.display.flip()
-        clock.tick(60)
+
+        frame_times.append(clock.tick(60))
+        if sum(frame_times) >= 2500:
+            fps = round(1000 / (sum(frame_times) / len(frame_times)))
+            frame_times = []
+            print(f"fps: {fps}")
 
     pygame.quit()
 

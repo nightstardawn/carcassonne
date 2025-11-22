@@ -11,12 +11,19 @@ from geom import *
 import random
 import pygame
 
+
 DebugLevel = Literal[0, 1, 2]
 QUIET: DebugLevel = 0
 INFO: DebugLevel = 1
 DEBUG: DebugLevel = 2
 
 DEBUG_LEVEL = QUIET
+
+
+class Ternary(Enum):
+    Never = 0
+    Maybe = 1
+    Must = 2
 
 
 class WF:
@@ -43,11 +50,20 @@ class Piece(ABC):
     @abstractmethod
     def has_road(self, direction: Direction) -> bool: ...
 
+    def is_road(self, direction: Direction) -> bool:
+        return self.has_road(direction)
+
     @abstractmethod
     def has_city(self, direction: Direction) -> bool: ...
 
+    def is_city(self, direction: Direction) -> bool:
+        return self.has_city(direction)
+
     @abstractmethod
     def has_river(self, direction: Direction) -> bool: ...
+
+    def is_river(self, direction: Direction) -> bool:
+        return self.has_river(direction)
 
     @abstractmethod
     def has_monastery(self) -> bool: ...
@@ -111,6 +127,36 @@ class Tile(Piece):
     def has_shield(self) -> bool:
         return self.kind.shield
 
+    @override
+    def valid_beside(self, other: Piece, dir: Direction) -> bool:
+        opp = dir.flip()
+
+        if isinstance(other, Cell):
+            if self.has_road(dir) and not other.has_road(opp):
+                return False
+            if self.has_city(dir) and not other.has_city(opp):
+                return False
+            if self.has_river(dir) and not other.has_river(opp):
+                return False
+
+            if other.is_road(opp) and not self.has_road(dir):
+                return False
+            if other.is_city(opp) and not self.has_city(dir):
+                return False
+            if other.is_river(opp) and not self.has_river(dir):
+                return False
+        else:
+            if self.has_road(dir) != other.has_road(opp):
+                return False
+
+            if self.has_city(dir) != other.has_city(opp):
+                return False
+
+            if self.has_river(dir) != other.has_river(opp):
+                return False
+
+        return True
+
 
 class Cell(Piece):
     pos: Pos
@@ -131,21 +177,37 @@ class Cell(Piece):
     __wave_function: set[tuple[Tile, int]]
     __wave_function_stage: int
 
+    # caches the connection directions from this cell, according to its valid options
+    __connect_road: dict[Direction, Ternary]
+    __connect_city: dict[Direction, Ternary]
+    __connect_river: dict[Direction, Ternary]
+
     # caches the stability of a cell
     __stable: bool
 
     def __init__(self, map: Map, pos: Pos, kinds: Iterable[TileKind]):
         self.map = map
         self.pos = pos
-        self.valid_options = { Tile(k, a) for k in kinds for a in get_args(Angle) }
         self.stage = 0
+
         self.__wave_function_stage = -1
         self.__stable = False
 
+        self.__connect_road = {dir: Ternary.Never for dir in Direction}
+        self.__connect_city = {dir: Ternary.Never for dir in Direction}
+        self.__connect_river = {dir: Ternary.Never for dir in Direction}
+
+        self.valid_options = { Tile(k, a) for k in kinds for a in get_args(Angle) }
+        self.recompute_connections()
+
     def __str__(self) -> str:
-        roads = (str(dir) for dir in Direction if self.has_road(dir))
-        cities = (str(dir) for dir in Direction if self.has_city(dir))
-        return f"Cell(stage {self.stage}; {len(self)} opts; roads: '{"".join(roads)}'; cities: '{"".join(cities)}')"
+        if INFO <= DEBUG_LEVEL:
+            roads = (str(dir) for dir in Direction if self.has_road(dir))
+            cities = (str(dir) for dir in Direction if self.has_city(dir))
+            rivers = (str(dir) for dir in Direction if self.has_river(dir))
+            return f"Cell(stage {self.stage}; {len(self)} opts; roads: '{"".join(roads)}'; cities: '{"".join(cities)}'; rivers: '{"".join(rivers)}')"
+
+        return f"Cell({len(self)} opts)"
 
     def __repr__(self) -> str:
         return str(self)
@@ -155,7 +217,6 @@ class Cell(Piece):
 
     @property
     def is_stable(self) -> bool:
-        # return len(self) <= 1
         return self.__stable
 
     @property
@@ -192,17 +253,39 @@ class Cell(Piece):
 
         return any(other.is_stable for _, other in self.map.around(self.pos))
 
+    def recompute_connections(self):
+        for dir in Direction:
+            n_road = len([ True for tile in self.valid_options if tile.has_road(dir) ])
+            n_city = len([ True for tile in self.valid_options if tile.has_city(dir) ])
+            n_river = len([ True for tile in self.valid_options if tile.has_river(dir) ])
+
+            self.__connect_city[dir] = Ternary.Never if n_city == 0 else (Ternary.Must if n_city == len(self.valid_options) else Ternary.Maybe)
+            self.__connect_road[dir] = Ternary.Never if n_road == 0 else (Ternary.Must if n_road == len(self.valid_options) else Ternary.Maybe)
+            self.__connect_river[dir] = Ternary.Never if n_river == 0 else (Ternary.Must if n_river == len(self.valid_options) else Ternary.Maybe)
+
     @override
     def has_road(self, direction: Direction) -> bool:
-        return any(tile.has_road(direction) for tile in self.valid_options)
+        return self.__connect_road[direction] != Ternary.Never
+
+    @override
+    def is_road(self, direction: Direction) -> bool:
+        return self.__connect_road[direction] == Ternary.Must
 
     @override
     def has_city(self, direction: Direction) -> bool:
-        return any(tile.has_city(direction) for tile in self.valid_options)
+        return self.__connect_city[direction] != Ternary.Never
+
+    @override
+    def is_city(self, direction: Direction) -> bool:
+        return self.__connect_city[direction] == Ternary.Must
 
     @override
     def has_river(self, direction: Direction) -> bool:
-        return any(tile.has_river(direction) for tile in self.valid_options)
+        return self.__connect_river[direction] != Ternary.Never
+
+    @override
+    def is_river(self, direction: Direction) -> bool:
+        return self.__connect_river[direction] == Ternary.Must
 
     @override
     def has_monastery(self) -> bool:
@@ -216,6 +299,7 @@ class Cell(Piece):
         if tile in self.valid_options:
             old_len = len(self)
             self.valid_options = {tile}
+            self.recompute_connections()
             self.__stable = True
             self.map.wf_def.take(self.map, self.pos, tile)
             return max(old_len - 1, 1)
@@ -230,11 +314,12 @@ class Cell(Piece):
             return 0
 
         old_len = len(self)
-        self.valid_options = {
+        self.valid_options.intersection_update([
             tile for tile in self.valid_options
-            if any(tile.valid_beside(other_tile, dir) for other_tile in other.valid_options)
-        }
+            if tile.valid_beside(other, dir)
+        ])
 
+        self.recompute_connections()
         return old_len - len(self)
 
 
@@ -372,19 +457,15 @@ class Map:
         newer, stale = self.around_by_stage(p, stage)
         for dir, other in newer:
             # other is a newer stage; update this to be consistent with it
-            self.debug(f"  {p}+{dir} is newer (@{other.stage})")
             reductions += this.reduce(other, dir)
 
         if reductions > 0:
             for dir, other in stale:
                 # other is the same or older than this; reduce it accordingly
-                self.debug(f"  {p}+{dir} is stale")
                 (r, v) = self.reduce(p + dir, stage)
                 this.reduce(other, dir)
                 reductions += r
                 visited += v
-        else:
-            self.debug(f"  no reductions at {p}, so skipping stale neighbours")
 
         return (reductions, visited)
 
