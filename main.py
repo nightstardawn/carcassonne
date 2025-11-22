@@ -6,7 +6,7 @@ from wfc import WF, Map, Tile
 from wave_functions import CityBuilder, LargeCities, DebugOverlay, Deck, Opportunistic, RealDeck, RiverBuilder, RiversFirst, RoadBuilder, WeLikeConnections, Yas
 
 
-W, H = 16, 16
+W, H = 20, 20
 SCREEN_W = 800
 BACKGROUND = "tan"
 # BACKGROUND = (83, 182, 95) # the background of the tiles
@@ -17,22 +17,22 @@ def main():
     screen_h = SCREEN_W * (H / W)
     tile_size = SCREEN_W // W
 
-    tiles = Tileset(Tileset.BaseTiles + Tileset.Rivers)
+    tiles = Tileset(Tileset.BaseTiles)
+    # tiles = Tileset(Tileset.BaseTiles + Tileset.Rivers)
     tiles.cache_images(tile_size, crop_inset=58 if CROP else 0)
 
     map = Map(W, H, tiles)
 
-    # map.wf_def = Deck(WF(), tiles, decks=2)
-    map.wf_def = RealDeck(Deck(map.wf_def, tiles, decks=3))
+    deck = Deck(WF(), tiles, decks=1, infinite=False)
 
-    # map.wf_def = CityBuilder(Deck(WF(), tiles, decks=3))
-    # map.wf_def = Yas(map.wf_def)
+    map.wf_def = deck
+    # map.wf_def = RealDeck(deck)
 
+    map.wf_def = CityBuilder(map.wf_def, draw=False)
     map.wf_def = RoadBuilder(map.wf_def, draw=False)
-    map.wf_def = CityBuilder(map.wf_def, draw=True)
     # map.wf_def = RiverBuilder(map.wf_def, draw=False)
-    map.wf_def = Opportunistic(map.wf_def)
 
+    map.wf_def = Opportunistic(map.wf_def)
     map.wf_def = DebugOverlay(map.wf_def)
 
     map.collapse(
@@ -60,6 +60,12 @@ def main():
                     auto = not auto
                 elif event.key == pygame.K_RETURN:
                     step(screen, map, tile_size)
+                elif event.key == pygame.K_r:
+                    deck.reset()
+                    map.latest += 1
+
+                    screen.fill(BACKGROUND)
+                    map.draw(screen, tile_size)
 
         if auto:
             step(screen, map, tile_size)
