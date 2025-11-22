@@ -4,7 +4,7 @@ from typing import Self, override
 
 import pygame
 from tileset import TileKind, Tileset
-from wfc import Cell, Map, Piece, Tile, WF
+from wfc import INFO, Cell, Map, Piece, Tile, WF
 from geom import *
 
 
@@ -22,6 +22,10 @@ class Extend[T: WF](WF):
         return self.inner.wave_function(map, pos, cell)
 
     @override
+    def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
+        return self.inner.entropy(map, pos, cell, wf)
+
+    @override
     def take(self, map: Map, pos: Pos, tile: Tile):
         self.inner.take(map, pos, tile)
 
@@ -30,11 +34,11 @@ class Extend[T: WF](WF):
         return self.inner.after_collapse(map, reductions)
 
     @override
-    def draw(self, map: Map, entropies: dict[Pos, int], scale: int, screen: pygame.Surface):
+    def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
         return self.inner.draw(map, entropies, scale, screen)
 
     @override
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, float], screen_pos: Pos, scale: int, screen: pygame.Surface):
         return self.inner.draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
 
 
@@ -48,18 +52,27 @@ class Deck(Extend[WF]):
         "ur.s": 2, "ulr": 3, "ulr.s": 1, "udlr.s": 1, "m.d": 2, "ulr.d": 1,
         "ulr.s.d": 2, "-.lr": 8, "-.ld": 9, "u.lr": 4, "u.ld": 3, "u.rd": 3,
         "ur.ld": 3, "ur.s.ld": 3, "-.lrd": 4, "u.lrd": 3, "-.ulrd": 1,
+
+        "river-d": 2, "river-ld": 2, "river-ld.ur": 1, "river-lr": 2,
+        "river-lr.-.ud": 1, "river-lr.-.ur": 1, "river-lr.m.d": 1,
+        "river-lr.u.d": 1, "river-lr.ud": 1,
     }
 
     @override
-    def __init__(self, inner: WF, tiles: Tileset, weight: bool = False, decks: int = 1):
+    def __init__(self, inner: WF, tiles: Tileset, weight: bool = False, decks: int = 1, infinite: bool = False):
         super().__init__(inner)
         self.tiles = tiles
         self.weight = weight
         self.hand = {}
+        self.decks = decks
+        self.infinite = infinite
 
-        for img_src, amount in Deck.TileFrequencies.items():
-            kind = next(tile for tile in self.tiles.kinds if tile.img_src == img_src)
-            self.hand[kind.id] = amount * decks
+        self.reset()
+
+    def reset(self):
+        for kind in self.tiles.kinds:
+            amount = Deck.TileFrequencies.get(kind.img_src, 1)
+            self.hand[kind.id] = amount * self.decks
 
     @override
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
@@ -79,6 +92,9 @@ class Deck(Extend[WF]):
     def take(self, map: Map, pos: Pos, tile: Tile):
         super().take(map, pos, tile)
         self.hand[tile.kind.id] -= 1
+
+        if self.infinite and all(amount == 0 for _, amount in self.hand.items()):
+            self.reset()
 
 class RealDeck(Extend[Deck]):
     top: int | None
@@ -109,7 +125,7 @@ class RealDeck(Extend[Deck]):
         self.shuffle()
 
     @override
-    def draw(self, map: Map, entropies: dict[Pos, int], scale: int, screen: pygame.Surface):
+    def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
         super().draw(map, entropies, scale, screen)
 
         if self.top:
@@ -188,6 +204,11 @@ class WeLikeConnections(Extend[WF], ABC):
         return { (tile, w * self.forecast(map, pos, tile)) for tile, w in wf }
 
     @override
+    def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
+        e = (1.0 / max(w for _, w in wf)) if len(wf) > 0 else 0
+        return e * len(wf)
+
+    @override
     def after_collapse(self, map: Map, reductions: int):
         super().after_collapse(map, reductions)
         self.strict = reductions > 0
@@ -227,7 +248,7 @@ class WeLikeConnections(Extend[WF], ABC):
             other_group.positions.add(pos)
 
     @override
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, float], screen_pos: Pos, scale: int, screen: pygame.Surface):
         super().draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
 
         if self.should_draw and (group := self.groups.get(pos)):
@@ -242,7 +263,6 @@ class RoadBuilder(WeLikeConnections):
     @staticmethod
     def forms_group(kind: TileKind) -> bool:
         return len(kind.roads) > 0
-
 
     @override
     @staticmethod
@@ -259,11 +279,34 @@ class CityBuilder(WeLikeConnections):
     def forms_group(kind: TileKind) -> bool:
         return len(kind.cities) > 0
 
-
     @override
     @staticmethod
     def connects(this: Piece, that: Piece, dir: Direction) -> bool:
         return this.connects_city(that, dir)
+
+
+class Opportunistic(Extend[WF]):
+    @override
+    def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
+        wf = super().wave_function(map, pos, cell)
+        return { (tile, w * len(cell)) for tile, w in wf }
+
+
+# Yasemin Yilmaz wave function implementation
+class Yas(Extend[WF]):
+    @override
+    def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
+        wf = super().wave_function(map, pos, cell)
+
+        return {
+            (tile, w - 2 * len([True for dir, other in map.around(pos) if self.connects(tile, other, dir)]))
+            for tile, w in wf
+        }
+
+    @staticmethod
+    def connects(this: Piece, that: Piece, dir: Direction) -> bool:
+        return this.connects_city(that, dir) or this.connects_road(that, dir)
+
 
 
 class DebugOverlay(Extend[WF]):
@@ -285,7 +328,11 @@ class DebugOverlay(Extend[WF]):
             self.last_taken = None
 
     @override
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+    def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
+        super().draw(map, entropies, scale, screen)
+
+    @override
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, float], screen_pos: Pos, scale: int, screen: pygame.Surface):
         super().draw_on_cell(map, pos, cell, entropies, screen_pos, scale, screen)
 
         rect = (screen_pos, (scale, scale))
@@ -296,17 +343,23 @@ class DebugOverlay(Extend[WF]):
         if len(entropies) == 0:
             return
 
+        # get the max and min entropies in the whole map. we don't want to include
+        # any ≤1 entropy cells for the min, though, because these are cells that
+        # we don't want to collapse (already collapsed, or not valid)
         max_entropy = max(entropies.values())
-        min_entropy = min((v for v in entropies.values() if v > 1), default=1)
+        min_entropy = min((v for v in entropies.values() if v > 1), default=None)
+
+        if min_entropy == None:
+            min_entropy = 1
+            map.debug("min entropy was None", INFO)
 
         if not cell.is_stable and (entropy := entropies.get(pos, 0)) > 0:
             if max_entropy == min_entropy:
-                p = 1
+                p = 1.0
             else:
-                p = 1 - ((entropy - min_entropy) / (max_entropy - min_entropy))
+                p = 1.0 - ((entropy - min_entropy) / (max_entropy - min_entropy))
 
             p = max(0, min(p, 1))
+            w: int = int(1 + 3*p)
 
-            w = 4 if entropy == min_entropy else 2
-
-            pygame.draw.rect(screen, (128 - int(128 * p), int(255 * p), int(128 * p)), rect, w)
+            pygame.draw.rect(screen, (80 - int(80 * p), int(200 * p) + 55, int(128 * p), 100), rect, w)

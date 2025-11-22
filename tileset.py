@@ -11,6 +11,7 @@ class TileKind:
     img_src: str
     id: int = field(default_factory=lambda: TileKind._get_id())
     roads: set[Direction] = field(default_factory=set)
+    rivers: set[Direction] = field(default_factory=set)
     cities: list[set[Direction]] = field(default_factory=list)
     monastery: bool = field(default=False)
     shield: bool = field(default=False)
@@ -30,7 +31,7 @@ class Tileset:
     kinds: list[TileKind]
     images: dict[tuple[int, Angle], pygame.Surface]
 
-    __ALL_TILE_TYPES: list[TileKind] = [
+    BaseTiles: list[TileKind] = [
         TileKind(img_src="m", monastery=True),
 
         TileKind(img_src="u", cities=[{U}]),
@@ -61,7 +62,19 @@ class Tileset:
         TileKind(img_src="-.ulrd", roads={U, L, R, D}),
     ]
 
-    def __init__(self, kinds: list[TileKind] = __ALL_TILE_TYPES):
+    Rivers: list[TileKind] = [
+        TileKind(img_src="river-d", rivers={D}),
+        TileKind(img_src="river-ld", rivers={L, D}),
+        TileKind(img_src="river-ld.ur", rivers={L, D}, cities=[{U, R}]),
+        TileKind(img_src="river-lr", rivers={L, R}),
+        TileKind(img_src="river-lr.-.ud", rivers={L, R}, roads={U, D}),
+        TileKind(img_src="river-lr.-.ur", rivers={L, R}, roads={U, R}),
+        TileKind(img_src="river-lr.m.d", rivers={L, R}, monastery=True, roads={D}),
+        TileKind(img_src="river-lr.u.d", rivers={L, R}, cities=[{U}], roads={D}),
+        TileKind(img_src="river-lr.ud", rivers={L, R}, cities=[{U}, {D}]),
+    ]
+
+    def __init__(self, kinds: list[TileKind] = BaseTiles):
         self.kinds = kinds
         self.images = {}
 

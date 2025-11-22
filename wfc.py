@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import chain
+from math import floor
 from typing import Callable, Generator, Iterable, get_args, overload, override
 from pygame.rect import Rect
 
@@ -22,16 +23,19 @@ class WF:
     def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
         return { (o, 1) for o in cell.valid_options }
 
+    def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
+        return sum(w for _, w in wf)
+
     def take(self, map: Map, pos: Pos, tile: Tile):
         pass
 
     def after_collapse(self, map: Map, reductions: int):
         pass
 
-    def draw(self, map: Map, entropies: dict[Pos, int], scale: int, screen: pygame.Surface):
+    def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
         pass
 
-    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, int], screen_pos: Pos, scale: int, screen: pygame.Surface):
+    def draw_on_cell(self, map: Map, pos: Pos, cell: Cell, entropies: dict[Pos, float], screen_pos: Pos, scale: int, screen: pygame.Surface):
         pass
 
 
@@ -41,6 +45,9 @@ class Piece(ABC):
 
     @abstractmethod
     def has_city(self, direction: Direction) -> bool: ...
+
+    @abstractmethod
+    def has_river(self, direction: Direction) -> bool: ...
 
     @abstractmethod
     def has_monastery(self) -> bool: ...
@@ -54,6 +61,9 @@ class Piece(ABC):
     def connects_city(self, other: Piece, dir: Direction) -> bool:
         return self.has_city(dir) and other.has_city(dir.flip())
 
+    def connects_river(self, other: Piece, dir: Direction) -> bool:
+        return self.has_river(dir) and other.has_river(dir.flip())
+
     def valid_beside(self, other: Piece, dir: Direction) -> bool:
         opp = dir.flip()
 
@@ -61,6 +71,9 @@ class Piece(ABC):
             return False
 
         if self.has_city(dir) != other.has_city(opp):
+            return False
+
+        if self.has_river(dir) != other.has_river(opp):
             return False
 
         return True
@@ -84,6 +97,11 @@ class Tile(Piece):
     def has_city(self, direction: Direction) -> bool:
         dir = direction.rotate(self.rotation, ccw=True)
         return any(dir in city for city in self.kind.cities)
+
+    @override
+    def has_river(self, direction: Direction) -> bool:
+        dir = direction.rotate(self.rotation, ccw=True)
+        return dir in self.kind.rivers
 
     @override
     def has_monastery(self) -> bool:
@@ -141,8 +159,11 @@ class Cell(Piece):
         return self.__stable
 
     @property
-    def entropy(self) -> int:
-        return sum(w for _, w in self.wave_function)
+    def entropy(self) -> float:
+        return self.map.wf_def.entropy(
+            self.map, self.pos, self,
+            self.wave_function
+        )
 
     # get this cell's wave function (i.e. weighted possibilities) w.r.t its map
     # map. if already computed for the current stage, it will just be returned.
@@ -157,13 +178,19 @@ class Cell(Piece):
 
         if self.__wave_function_stage < self.map.latest:
             self.__wave_function = {
-                (t, v) for t, v in self.map.entropy_def.wave_function(self.map, self.pos, self)
+                (t, v) for t, v in self.map.wf_def.wave_function(self.map, self.pos, self)
                 if v > 0
             }
 
             self.__wave_function_stage = self.map.latest
 
         return self.__wave_function
+
+    def is_visible(self) -> bool:
+        if self.is_stable:
+            return True
+
+        return any(other.is_stable for _, other in self.map.around(self.pos))
 
     @override
     def has_road(self, direction: Direction) -> bool:
@@ -172,6 +199,10 @@ class Cell(Piece):
     @override
     def has_city(self, direction: Direction) -> bool:
         return any(tile.has_city(direction) for tile in self.valid_options)
+
+    @override
+    def has_river(self, direction: Direction) -> bool:
+        return any(tile.has_river(direction) for tile in self.valid_options)
 
     @override
     def has_monastery(self) -> bool:
@@ -186,7 +217,7 @@ class Cell(Piece):
             old_len = len(self)
             self.valid_options = {tile}
             self.__stable = True
-            self.map.entropy_def.take(self.map, self.pos, tile)
+            self.map.wf_def.take(self.map, self.pos, tile)
             return max(old_len - 1, 1)
         else:
             print(f"error: attempted to stabilise {self.pos} to invalid {tile.kind}")
@@ -212,7 +243,7 @@ class Map:
     height: int
     latest: int
     tileset: Tileset
-    entropy_def: WF
+    wf_def: WF
 
     _cells: list[list[Cell]]
 
@@ -222,7 +253,7 @@ class Map:
         self._cells = [ [ Cell(self, Pos(x, y), tileset.kinds) for x in range(width) ] for y in range(height) ]
         self.latest = 0
         self.tileset = tileset
-        self.entropy_def = WF()
+        self.wf_def = WF()
 
     @property
     def min(self) -> Pos:
@@ -263,23 +294,24 @@ class Map:
             if any(other.is_stable for _, other in self.around(pos)):
                 yield pos, cell
 
+    def visible(self) -> Iterator[tuple[Pos, Cell]]:
+        for pos, cell in self:
+            if cell.is_visible():
+                yield pos, cell
+
     # faster, more direct entropy calculation for this simple case
     def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
         return len(cell)
 
     def draw(self, screen: pygame.Surface, scale: int):
         entropies = {
-            pos: cell.entropy for pos, cell in self
-            if len(cell) != self.tileset.num_tiles
+            pos: cell.entropy for pos, cell in self.visible()
         }
 
-        for pos, cell in self:
-            if len(cell) == self.tileset.num_tiles:
-                # don't draw tiles in full superposition
-                continue
-
+        for pos, cell in self.visible():
             wf = cell.wave_function
             entropy = entropies[pos]
+            total = sum(w for _, w in wf)
             dest = self.screen_pos(pos, scale)
 
             for tile, w in wf:
@@ -288,17 +320,17 @@ class Map:
                 if cell.is_stable:
                     img.set_alpha(255)
                 elif entropy > 0:
-                    img.set_alpha((w * 128) // entropy)
+                    img.set_alpha((w * 128) // total)
                 else:
                     # should never happen that the cell is unstable but has 0 entropy
-                    print(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {wf}\n  but it's not stable\n  with possible: {cell.valid_options}")
-                    img.set_alpha((w * 64) // (entropy+1))
+                    self.debug(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {[w for _, w in wf]}\n  but it's not stable\n  with possible: {len(cell.valid_options)}", QUIET)
+                    img.set_alpha((w * 64) // (total+1))
 
                 screen.blit(img, dest)
 
-            self.entropy_def.draw_on_cell(self, pos, cell, entropies, dest, scale, screen)
+            self.wf_def.draw_on_cell(self, pos, cell, entropies, dest, scale, screen)
 
-        self.entropy_def.draw(self, entropies, scale, screen)
+        self.wf_def.draw(self, entropies, scale, screen)
 
     def screen_pos(self, p: Pos, scale: int) -> Pos:
         return Pos(p.x, self.height - p.y - 1) * scale
@@ -389,7 +421,7 @@ class Map:
         self.latest += 1
         (reductions, visited) = self.reduce(p, self.latest, reductions=diff)
 
-        self.entropy_def.after_collapse(self, reductions)
+        self.wf_def.after_collapse(self, reductions)
         self.debug(f"collapsed. {reductions} reductions, visited {visited} tiles", INFO)
 
         return (reductions, visited)
@@ -397,13 +429,13 @@ class Map:
     def collapse_min(self) -> tuple[int, int]:
         min_entropy = min((
             entropy
-            for (pos, cell) in self.bordering()
+            for (_, cell) in self.bordering()
             # if not cell.is_stable and (entropy := self.entropy_def.entropy(self, pos, cell)) > 0
             if not cell.is_stable and (entropy := cell.entropy) > 0
         ), default=None)
 
         if min_entropy == None:
-            self.entropy_def.after_collapse(self, 0)
+            self.wf_def.after_collapse(self, 0)
             self.latest += 1
             return (0, 0)
 

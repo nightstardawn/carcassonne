@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator, Literal, Sequence, overload, override
+import typing
 
 
 Angle = Literal[0, 1, 2, 3]
