@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from math import exp, log
 import random
 from typing import Self, override
 
@@ -106,7 +107,7 @@ class Deck(Extend[WF]):
             }
         else:
             return {
-                (tile, self.hand[tile.kind.id] * n) for (tile, n) in wf
+                (tile, self.hand.get(tile.kind.id, 0) * n) for (tile, n) in wf
             }
 
     @override
@@ -137,10 +138,10 @@ class Deck(Extend[WF]):
         x = x_b
         for tile, amount in kinds:
             for j in reversed(range(amount)):
-                k = j / amount
-                y = y_b - j * 15
+                k = j / max(amount - 1, 1)
+                y = y_b - log(j + 1) * 15
                 img = self.tiles.images[tile, hs, 0]
-                img.set_alpha(255 if j == 0 else int(64 + 128 * (1 - k)))
+                img.set_alpha(255 if j == 0 else int(80 + 175 * (1 - k)))
                 pygame.draw.rect(screen, "black", (x, y, hs, hs))
                 screen.blit(img, (x, y))
 
@@ -160,9 +161,13 @@ class RealDeck(Extend[Deck]):
             self.inner.tiles.cache_images(self.hint_scale, 0)
 
     def shuffle(self):
-        ids = [ id for id, amount in self.inner.hand.items() if amount > 0 ]
-        if len(ids) > 0:
-            self.top = random.choice(ids)
+        kinds = [ self.inner.tiles[id] for id, amount in self.inner.hand.items() if amount > 0 ]
+
+        if any("river" in kind.img_src for kind in kinds):
+            kinds = [ kind for kind in kinds if "river" in kind.img_src ]
+
+        if len(kinds) > 0:
+            self.top = random.choice(kinds).id
         else:
             self.top = None
 
@@ -392,10 +397,19 @@ class RiverBuilder(WeLikeConnections):
 
 
 class Opportunistic(Extend[WF]):
+    weight: float
+
+    def __init__(self, inner: WF, weight: float = 2):
+        super().__init__(inner)
+        self.weight = weight
+
     @override
-    def wave_function(self, map: Map, pos: Pos, cell: Cell) -> set[tuple[Tile, int]]:
-        wf = super().wave_function(map, pos, cell)
-        return { (tile, w * len(cell)) for tile, w in wf }
+    def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
+        e = super().entropy(map, pos, cell, wf)
+        if e < 0:
+            return e
+
+        return len(cell) * self.weight + e
 
 
 # Yasemin Yilmaz wave function implementation
@@ -490,7 +504,6 @@ class DebugOverlay(Extend[WF]):
                 p = 1.0 - ((entropy - min_entropy) / (max_entropy - min_entropy))
 
             p = max(0, min(p, 1))
-
             w: int = max(0, int(scale*0.05 + (scale*0.075)*p))
 
             pygame.draw.rect(screen, (0, int(170 * p * p) + 70, int(130 * p) + 25, 100), rect, w)

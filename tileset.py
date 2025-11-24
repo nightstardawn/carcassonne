@@ -64,6 +64,9 @@ class Tileset:
         TileKind(img_src="-.ulrd", roads={U, L, R, D}),
     ]
 
+    RoadTiles: list[TileKind] = [ k for k in BaseTiles if len(k.cities) == 0 ]
+    CityTiles: list[TileKind] = [ k for k in BaseTiles if len(k.cities) > 0 ]
+
     Rivers: list[TileKind] = [
         TileKind(img_src="river-d", rivers={D}),
         TileKind(img_src="river-ld", rivers={L, D}),

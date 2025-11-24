@@ -402,23 +402,25 @@ class Map:
 
         for pos, cell in self.visible():
             wf = cell.wave_function
-            entropy = entropies.get(pos, -1)
             total = sum(w for _, w in wf)
-            dest = self.screen_pos(pos, scale)
+            dx, dy = dest = self.screen_pos(pos, scale)
+            ins = 2
+
+            # if not cell.is_stable and len(wf) > 0:
+            #     pygame.draw.rect(screen, (150, 100, 255), (dest, (scale, scale)))
 
             for tile, w in wf:
                 img = self.tileset.images[tile.kind.id, scale, tile.rotation]
 
                 if cell.is_stable:
                     img.set_alpha(255)
-                elif entropy > -1:
-                    img.set_alpha((w * 255) // total)
+                    screen.blit(img, dest)
                 else:
-                    # should never happen that the cell is unstable but has <=-1 entropy
-                    self.debug(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {[w for _, w in wf]}\n  but it's not stable\n  with possible: {len(cell.valid_options)}", QUIET)
-                    img.set_alpha((w * 64) // (total+1))
+                    img.set_alpha(int((w / total) * 230))
+                    screen.blit(img, (dx+ins, dy+ins),
+                        (ins, ins, scale-ins*2, scale-ins*2)
+                    )
 
-                screen.blit(img, dest)
 
             if draw_extra:
                 self.wf_def.draw_on_cell(self, pos, cell, entropies, dest, scale, screen)
