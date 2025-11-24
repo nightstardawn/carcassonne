@@ -46,12 +46,16 @@ class Deck(Extend[WF]):
     tiles: Tileset
     weight: bool
     hand: dict[int, int] # a dictionary of in our hand, and their amounts
+    decks: int
+    infinite: bool
+    infinite_rivers: bool
+    hint_scale: int | None
 
     TileFrequencies = {
         "m": 4, "u": 5, "u-d": 3, "u-r": 2, "lr": 1, "lr.s": 2, "ur": 3,
         "ur.s": 2, "ulr": 3, "ulr.s": 1, "udlr.s": 1, "m.d": 2, "ulr.d": 1,
         "ulr.s.d": 2, "-.lr": 8, "-.ld": 9, "u.lr": 4, "u.ld": 3, "u.rd": 3,
-        "ur.ld": 3, "ur.s.ld": 3, "-.lrd": 4, "u.lrd": 3, "-.ulrd": 1,
+        "ur.ld": 3, "ur.s.ld": 2, "-.lrd": 4, "u.lrd": 3, "-.ulrd": 1,
 
         "river-d": 2, "river-ld": 2, "river-ld.ur": 1, "river-lr": 2,
         "river-lr.-.ud": 1, "river-lr.-.ur": 1, "river-lr.m.d": 1,
@@ -59,18 +63,35 @@ class Deck(Extend[WF]):
     }
 
     @override
-    def __init__(self, inner: WF, tiles: Tileset, weight: bool = False, decks: int = 1, infinite: bool = False):
+    def __init__(
+        self,
+        inner: WF, tiles: Tileset,
+        weight: bool = False, decks: int = 1,
+        infinite: bool = False, infinite_rivers: bool = False,
+        hint_scale: int | None = 64,
+    ):
         super().__init__(inner)
         self.tiles = tiles
         self.weight = weight
         self.hand = {}
         self.decks = decks
         self.infinite = infinite
+        self.infinite_rivers = infinite_rivers
+        self.hint_scale = hint_scale
 
-        self.reset()
+        if self.hint_scale:
+            self.tiles.cache_images(self.hint_scale, 0)
 
-    def reset(self):
+        self.reset(True)
+
+    def reset(self, with_rivers: bool | None = None):
+        if with_rivers == None:
+            with_rivers = self.infinite_rivers
+
         for kind in self.tiles.kinds:
+            if "river" in kind.img_src and not with_rivers:
+                continue
+
             amount = Deck.TileFrequencies.get(kind.img_src, 1)
             self.hand[kind.id] = amount * self.decks
 
@@ -96,13 +117,43 @@ class Deck(Extend[WF]):
         if self.infinite and all(amount == 0 for _, amount in self.hand.items()):
             self.reset()
 
+    @override
+    def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
+        super().draw(map, entropies, scale, screen)
+
+        if not (hs := self.hint_scale):
+            return
+
+        kinds = [ (tile, amount) for (tile, amount) in self.hand.items() if amount > 0 ]
+        self.draw_deck(20, screen.get_height() - 20 - hs, kinds, hs, screen)
+
+    def draw_deck(self, x_b: int, y_b: int, kinds: list[tuple[int, int]], hs: int, screen: pygame.Surface):
+        if len(kinds) == 0:
+            return
+
+        total_width = screen.get_width() - x_b - hs
+        x_per_tile = min(total_width / len(kinds), hs + 10)
+
+        x = x_b
+        for tile, amount in kinds:
+            for j in reversed(range(amount)):
+                k = j / amount
+                y = y_b - j * 15
+                img = self.tiles.images[tile, hs, 0]
+                img.set_alpha(255 if j == 0 else int(64 + 128 * (1 - k)))
+                pygame.draw.rect(screen, "black", (x, y, hs, hs))
+                screen.blit(img, (x, y))
+
+            x += x_per_tile
+
+
 class RealDeck(Extend[Deck]):
     top: int | None
     hint_scale: int | None
 
-    def __init__(self, inner: Deck, hint_scale: int | None = 80) -> None:
+    def __init__(self, inner: Deck, hint_scale: int | None = None) -> None:
         super().__init__(inner)
-        self.hint_scale = hint_scale
+        self.hint_scale = hint_scale or inner.hint_scale
 
         self.shuffle()
         if self.hint_scale is not None:
@@ -131,14 +182,21 @@ class RealDeck(Extend[Deck]):
 
     @override
     def draw(self, map: Map, entropies: dict[Pos, float], scale: int, screen: pygame.Surface):
-        super().draw(map, entropies, scale, screen)
+        if not self.inner.hint_scale or not (hs := self.hint_scale) or not self.top:
+            super().draw(map, entropies, scale, screen)
+            return
 
-        if self.top and (hs := self.hint_scale):
-            x, y, w = 20, 20, 4
-            img = self.inner.tiles.images[self.top, self.hint_scale, 0]
-            img.set_alpha(255)
-            pygame.draw.rect(screen, "wheat1", (x, y, hs + w * 2, hs + w * 2))
-            screen.blit(img, (x + w, y + w))
+        top_kinds = [(self.top, self.inner.hand[self.top])]
+        self.inner.draw_deck(20, screen.get_height() - 20 - hs, top_kinds, hs, screen)
+
+        kinds = [
+            (tile, amount) for (tile, amount) in self.inner.hand.items()
+            if amount > 0 and tile != self.top
+        ]
+        self.inner.draw_deck(
+            40 + hs, screen.get_height() - 20 - self.inner.hint_scale,
+            kinds, self.inner.hint_scale, screen
+        )
 
 
 # A definition of a wave function in which, if it's possible for the chosen tile
@@ -222,7 +280,10 @@ class WeLikeConnections(Extend[WF], ABC):
 
     @override
     def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
-        e = (1.0 / max(w for _, w in wf)) if len(wf) > 0 else 0
+        if len(wf) == 0:
+            return -1
+
+        e = (1.0 / max(w for _, w in wf))
         return e * len(wf)
 
     @override
@@ -420,21 +481,16 @@ class DebugOverlay(Extend[WF]):
         # any ≤1 entropy cells for the min, though, because these are cells that
         # we don't want to collapse (already collapsed, or not valid)
         max_entropy = max(entropies.values())
-        min_entropy = min((v for v in entropies.values() if v > 0), default=None)
+        min_entropy = min((v for v in entropies.values() if v > -1), default=0)
 
-        if min_entropy == None:
-            min_entropy = 1
-
-        if not cell.is_stable and (entropy := entropies.get(pos, 0)) > 0:
+        if not cell.is_stable and (entropy := entropies.get(pos, 0)) > -1:
             if max_entropy == min_entropy:
                 p = 1.0
             else:
                 p = 1.0 - ((entropy - min_entropy) / (max_entropy - min_entropy))
 
-            p = max(0, min(p, 0.8))
-            if entropy == min_entropy:
-                p = 1
+            p = max(0, min(p, 1))
 
-            w: int = max(0, int(scale*0.05 + (scale*0.05)*p))
+            w: int = max(0, int(scale*0.05 + (scale*0.075)*p))
 
             pygame.draw.rect(screen, (0, int(170 * p * p) + 70, int(130 * p) + 25, 100), rect, w)

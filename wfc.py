@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import chain
-from math import floor
+from math import exp, floor, log
 from typing import Callable, Generator, Iterable, get_args, overload, override
 from pygame.rect import Rect
 
@@ -31,7 +31,13 @@ class WF:
         return { (o, 1) for o in cell.valid_options }
 
     def entropy(self, map: Map, pos: Pos, cell: Cell, wf: set[tuple[Tile, int]]) -> float:
-        return sum(w for _, w in wf)
+        if (total := sum(w for _, w in wf)) == 0:
+            return -1
+
+        return -sum(
+            p * log(p) for _, w in wf
+            if (p := float(w) / float(total)) > 0
+        )
 
     def take(self, map: Map, pos: Pos, tile: Tile):
         pass
@@ -388,14 +394,15 @@ class Map:
     def entropy(self, map: Map, pos: Pos, cell: Cell) -> int:
         return len(cell)
 
-    def draw(self, screen: pygame.Surface, scale: int):
+    def draw(self, screen: pygame.Surface, scale: int, draw_extra: bool = True):
         entropies = {
             pos: cell.entropy for pos, cell in self.visible()
+            if not cell.is_stable
         }
 
         for pos, cell in self.visible():
             wf = cell.wave_function
-            entropy = entropies[pos]
+            entropy = entropies.get(pos, -1)
             total = sum(w for _, w in wf)
             dest = self.screen_pos(pos, scale)
 
@@ -404,18 +411,20 @@ class Map:
 
                 if cell.is_stable:
                     img.set_alpha(255)
-                elif entropy > 0:
-                    img.set_alpha((w * 128) // total)
+                elif entropy > -1:
+                    img.set_alpha((w * 255) // total)
                 else:
-                    # should never happen that the cell is unstable but has 0 entropy
+                    # should never happen that the cell is unstable but has <=-1 entropy
                     self.debug(f"weird!\n  entropy = {entropy} at {pos}\n  with wf: {[w for _, w in wf]}\n  but it's not stable\n  with possible: {len(cell.valid_options)}", QUIET)
                     img.set_alpha((w * 64) // (total+1))
 
                 screen.blit(img, dest)
 
-            self.wf_def.draw_on_cell(self, pos, cell, entropies, dest, scale, screen)
+            if draw_extra:
+                self.wf_def.draw_on_cell(self, pos, cell, entropies, dest, scale, screen)
 
-        self.wf_def.draw(self, entropies, scale, screen)
+        if draw_extra:
+            self.wf_def.draw(self, entropies, scale, screen)
 
     def screen_pos(self, p: Pos, scale: int) -> Pos:
         return Pos(p.x, self.height - p.y - 1) * scale
@@ -511,8 +520,9 @@ class Map:
         min_entropy = min((
             entropy
             for (_, cell) in self.bordering()
-            # if not cell.is_stable and (entropy := self.entropy_def.entropy(self, pos, cell)) > 0
-            if not cell.is_stable and (entropy := cell.entropy) > 0
+
+            # entropy <= -1 means that it has NO options
+            if not cell.is_stable and (entropy := cell.entropy) > -1
         ), default=None)
 
         if min_entropy == None:
@@ -522,13 +532,35 @@ class Map:
 
         minimum = [
             (pos, cell) for (pos, cell) in self.bordering()
-            # if not cell.is_stable and self.entropy_def.entropy(self, pos, cell) == min_entropy
             if not cell.is_stable and cell.entropy == min_entropy
         ]
 
         (pos, chosen_cell) = random.choice(minimum)
-        self.debug(f"{len(minimum)} cells to choose from, with entropy {min_entropy}", INFO)
+        self.debug(f"  {len(minimum)} cells to choose from, with entropy {min_entropy}", INFO)
         self.debug(f"  chosen {pos}, with {len(chosen_cell)} options", INFO)
+
+        return self.collapse(pos)
+
+    def collapse_random(self, k: float) -> tuple[int, int]:
+        likelihoods = [
+            (pos, entropy, exp(-entropy * k))
+            for (pos, cell) in self.bordering()
+
+            # entropy <= -1 means that it has NO options
+            if not cell.is_stable and (entropy := cell.entropy) > -1
+        ]
+
+        for p, e, w in likelihoods:
+            self.debug(f"pos {p}, entropy: {e}, weight: {w}", INFO)
+
+        if len(likelihoods) == 0:
+            self.wf_def.after_collapse(self, 0)
+            self.latest += 1
+            return (0, 0)
+
+        xs, _, ps = zip(*likelihoods)
+        pos = random.choices(xs, ps, k=1)[0]
+        self.debug(f"  chosen {pos}", INFO)
 
         return self.collapse(pos)
 
