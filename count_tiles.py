@@ -5,19 +5,19 @@ from tileset import TileKind, Tileset
 
 
 # returns (actual, max possible)
-def count(tiles: Tileset) -> tuple[int, int]:
+def count(tiles: Tileset, options: list[str | None] = ["city", "road", None]) -> tuple[int, int]:
     possibilities = [
         {U: u, D: d, L: l, R: r}
-        for (u, d, l, r) in product(["city", "road", None], repeat=4)
+        for (u, d, l, r) in product(options, repeat=4)
     ]
 
     n = 0
     for poss in possibilities:
         try:
-            match = next(kind for kind in tiles.kinds if matches(kind, poss))
+            next(kind for kind in tiles.kinds if matches(kind, poss))
             n += 1
         except StopIteration:
-            print(f"nothing matches {poss}")
+            pass
 
     return (n, len(possibilities))
 
@@ -50,3 +50,9 @@ tileset = Tileset(Tileset.BaseTiles)
 actual, possible = count(tileset)
 print(f"in the base tileset, there are {actual} distinct tile layouts, out of a possible {possible}")
 print("(modulo shields, monasteries, and rivers; we only care about roads and cities here. we also don't consider the connectness of cities and roads)")
+
+actual, possible = count(tileset, options=["road", None])
+print(f"\nif we only care about roads, then we have {actual} of {possible}")
+
+actual, possible = count(tileset, options=["city", None])
+print(f"if we only care about cities, then we have {actual} of {possible}")
