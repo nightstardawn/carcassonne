@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import cache, cached_property
 from itertools import chain
 from math import exp, floor, log
 from typing import Callable, Generator, Iterable, get_args, overload, override
@@ -105,10 +106,12 @@ class Piece(ABC):
 class Tile(Piece):
     kind: TileKind
     rotation: Angle
+    __hash: int
 
-    @override
-    def __hash__(self) -> int:
-        return hash((
+    def __init__(self, kind: TileKind, rotation: Angle):
+        self.kind = kind
+        self.rotation = rotation
+        self.__hash = hash((
             self.kind,
             self.has_monastery(),
             self.has_shield(),
@@ -117,16 +120,13 @@ class Tile(Piece):
             *(self.has_river(dir) for dir in Direction),
         ))
 
+    @override
+    def __hash__(self) -> int:
+        return self.__hash
+
     def __eq__(self, other: object) -> bool:
         if isinstance(other, Tile):
-            return all([
-                self.kind == other.kind,
-                self.has_monastery() == other.has_monastery(),
-                self.has_shield() == other.has_shield(),
-                *(self.has_road(dir) == other.has_road(dir) for dir in Direction),
-                *(self.has_city(dir) == other.has_city(dir) for dir in Direction),
-                *(self.has_river(dir) == other.has_river(dir) for dir in Direction),
-            ])
+            return hash(self) == hash(other)
 
         return False
 
@@ -575,8 +575,14 @@ class Map:
         return self.collapse(pos)
 
     def collapse_random(self, k: float) -> tuple[int, int]:
+        def f(e):
+            try:
+                return exp(-e * k)
+            except OverflowError:
+                return 1
+
         likelihoods = [
-            (pos, entropy, exp(-entropy * k))
+            (pos, entropy, f(entropy))
             for (pos, cell) in self.bordering()
 
             # entropy <= -1 means that it has NO options

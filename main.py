@@ -6,7 +6,7 @@ from wfc import INFO, WF, Map, Tile
 from wave_functions import CityBuilder, LargeCities, DebugOverlay, Deck, Opportunistic, RealDeck, RiverBuilder, RiversFirst, RoadBuilder, WeLikeConnections, Yas
 
 
-W, H = 16, 16
+W, H = 25, 25
 
 SCREEN_W = 800
 SCREEN_H = SCREEN_W * (H / W)
@@ -24,19 +24,19 @@ def setup_wave_function() -> WF:
 
     deck = Deck(
         WF(), tiles,
-        decks=1, infinite=False, infinite_rivers=False,
+        decks=1, infinite=True, infinite_rivers=False,
         hint_scale=55
     )
 
     wf = deck
     wf = RealDeck(wf)
 
-    # wf = CityBuilder(wf, draw=False)
-    # wf = RoadBuilder(wf, draw=False)
+    wf = CityBuilder(wf, draw=False)
+    wf = RoadBuilder(wf, draw=False)
     # wf = RiverBuilder(wf, draw=False)
 
-    # wf = Opportunistic(wf, weight=1.0 / (len(tiles.kinds) * 4))
-    # wf = DebugOverlay(wf)
+    wf = Opportunistic(wf, weight=1.0 / (len(tiles.kinds) * 4))
+    wf = DebugOverlay(wf)
 
     return wf
 
