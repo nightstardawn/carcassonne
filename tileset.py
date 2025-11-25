@@ -32,6 +32,7 @@ class Tileset:
 
     # image cache, keyed by (tile id, scale, angle)
     images: dict[tuple[int, int, Angle], pygame.Surface]
+    shadows: dict[int, pygame.Surface]
 
     BaseTiles: list[TileKind] = [
         TileKind(img_src="m", monastery=True),
@@ -82,6 +83,7 @@ class Tileset:
     def __init__(self, kinds: list[TileKind] = BaseTiles):
         self.kinds = kinds
         self.images = {}
+        self.shadows = {}
 
     @property
     def num_tiles(self) -> int:
@@ -93,7 +95,10 @@ class Tileset:
     def __getitem__(self, id: int) -> TileKind:
         return next(kind for kind in self.kinds if kind.id == id)
 
-    def cache_images(self, scale: int, crop_inset: int = 0):
+    def cache_images(self, scale: int, crop_inset: int = 0, shadow_alpha: int = 80):
+        if len(self.kinds) == 0:
+            return
+
         for kind in self.kinds:
             base = pygame.image.load(f"tiles/{kind.img_src}.bmp")
 
@@ -104,4 +109,9 @@ class Tileset:
             scaled = pygame.transform.smoothscale(base, (scale, scale))
             for angle in get_args(Angle):
                 rotated = pygame.transform.rotate(scaled, -angle * 90)
-                self.images[kind.id, scale, angle] = rotated
+                self.images[kind.id, scale, angle] = rotated.convert(rotated.get_bitsize(), rotated.get_flags() ^ pygame.SRCALPHA)
+
+        shadow = self.images[self.kinds[0].id, scale, 0].copy()
+        shadow.fill((0, 0, 0))
+        shadow.set_alpha(shadow_alpha)
+        self.shadows[scale] = shadow

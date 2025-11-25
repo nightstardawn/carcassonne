@@ -108,7 +108,27 @@ class Tile(Piece):
 
     @override
     def __hash__(self) -> int:
-        return hash(self.kind) * 4 + self.rotation
+        return hash((
+            self.kind,
+            self.has_monastery(),
+            self.has_shield(),
+            *(self.has_road(dir) for dir in Direction),
+            *(self.has_city(dir) for dir in Direction),
+            *(self.has_river(dir) for dir in Direction),
+        ))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Tile):
+            return all([
+                self.kind == other.kind,
+                self.has_monastery() == other.has_monastery(),
+                self.has_shield() == other.has_shield(),
+                *(self.has_road(dir) == other.has_road(dir) for dir in Direction),
+                *(self.has_city(dir) == other.has_city(dir) for dir in Direction),
+                *(self.has_river(dir) == other.has_river(dir) for dir in Direction),
+            ])
+
+        return False
 
     @override
     def has_road(self, direction: Direction) -> bool:
@@ -401,13 +421,22 @@ class Map:
         }
 
         for pos, cell in self.visible():
+            dx, dy = self.screen_pos(pos, scale)
+            p = Pos(dx, dy)
+            shadow = self.tileset.shadows[scale]
+            if cell.is_stable:
+                shadow.set_alpha(60)
+                screen.blit(shadow, p + Pos(2, 2))
+            elif sum(w for _, w in cell.wave_function) > 0:
+                shadow.set_alpha(30)
+                sx, sy = sp = Pos(4, 4)
+                screen.blit(shadow, p + sp, (sx, sy, scale-2, scale-2))
+
+        for pos, cell in self.visible():
             wf = cell.wave_function
             total = sum(w for _, w in wf)
             dx, dy = dest = self.screen_pos(pos, scale)
             ins = 2
-
-            # if not cell.is_stable and len(wf) > 0:
-            #     pygame.draw.rect(screen, (150, 100, 255), (dest, (scale, scale)))
 
             for tile, w in wf:
                 img = self.tileset.images[tile.kind.id, scale, tile.rotation]
@@ -416,9 +445,9 @@ class Map:
                     img.set_alpha(255)
                     screen.blit(img, dest)
                 else:
-                    img.set_alpha(int((w / total) * 230))
+                    img.set_alpha(int((w / total) * 220))
                     screen.blit(img, (dx+ins, dy+ins),
-                        (ins, ins, scale-ins*2, scale-ins*2)
+                        (ins-1, ins-1, scale-ins*2, scale-ins*2)
                     )
 
 
@@ -501,6 +530,8 @@ class Map:
 
             choices, weights = zip(*wf)
             chosen_tile = random.choices(choices, weights, k=1)[0]
+
+        assert chosen_tile is not None
 
         if chosen_tile not in this.valid_options:
             raise ValueError(
