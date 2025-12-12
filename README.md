@@ -18,4 +18,4 @@ The wave functions and entropy definitions are defined in `wave_functions.py`. I
 
 ## Help?
 
-Please reach out to me if you want to do something with this but don't know how to!
+Please reach out to me if you want to do something with this but don't know how to! Discord at `zacmg`, or email me at [zac.garby@nottingham.ac.uk](mailto:zac.garby@nottingham.ac.uk).
